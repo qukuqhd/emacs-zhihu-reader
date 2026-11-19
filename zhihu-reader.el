@@ -904,7 +904,11 @@ LIST-TYPE is `ul' or `ol' when inside a list."
       (save-excursion
         (goto-char marker)
         (ignore-errors (org-back-to-heading t))
-        (ignore-errors (org-fold-show-subtree)))
+        ;; Narrowing makes this impossible to affect sibling questions,
+        ;; even if Org's global fold state was inherited from a prior page.
+        (save-restriction
+          (ignore-errors (org-narrow-to-subtree))
+          (ignore-errors (org-fold-show-all))))
       (ignore-errors (force-window-update (current-buffer))))))
 
 (defun zhihu-reader--set-comment-status (marker status &optional actual)
@@ -1340,7 +1344,14 @@ the target buffer."
     (when (memq (car-safe view) '(question answer))
       (with-current-buffer buffer
         (zhihu-reader--auto-load-comments)))
-    (zhihu-reader--restore-navigation-anchor)))
+    (zhihu-reader--restore-navigation-anchor)
+    ;; A new list page must start folded.  Do this after restoring the
+    ;; navigation anchor so a previous page's global fold state cannot leak.
+    (unless (memq (car-safe view) '(question answer))
+      (with-current-buffer buffer
+        (setq-local org-cycle-global-status nil)
+        (ignore-errors (org-overview))
+        (setq-local org-cycle-global-status 'overview)))))
 
 ;;;; Detail APIs
 
@@ -3448,8 +3459,11 @@ Limit to `zhihu-reader-auto-comments-limit' sections."
               (when (and zhihu-reader-render-images (display-graphic-p))
                 (zhihu-reader--process-buffer-images beg end))
               ;; Refresh only the current subtree; never expand every
-              ;; top-level question after a page switch.
-              (ignore-errors (org-fold-show-subtree))
+              ;; top-level question after a page switch.  Narrowing also
+              ;; isolates us from a global fold state left by the prior page.
+              (save-restriction
+                (ignore-errors (org-narrow-to-subtree))
+                (ignore-errors (org-fold-show-all)))
               (ignore-errors (force-window-update (current-buffer)))))
         (error nil)))))
 
