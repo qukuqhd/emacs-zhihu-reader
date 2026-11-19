@@ -162,6 +162,12 @@ Images are cached under `zhihu-reader-image-cache'.  Use
 
 (defvar-local zhihu-reader--view nil
   "Current reader view: (KIND ARG).")
+(defvar-local zhihu-reader--following-next nil
+  "Next cursor URL for the following feed.")
+
+(defvar-local zhihu-reader--following-prev nil
+  "Previous cursor URL for the following feed.")
+
 (defvar-local zhihu-reader--generation 0
   "Incremented whenever a reader buffer is replaced.")
 
@@ -1644,9 +1650,11 @@ When SHOW is non-nil, expand the comments subtree."
                          (if (and next (not (eq is-end t))) "1" "0"))
           (org-entry-put nil "ZHIHU-CHILDREN-HAS-PREV" (if previous "1" "0")))))))
 
-(defun zhihu-reader--load-child-comments-async (comment-id marker &optional cursor show)
+(defun zhihu-reader--load-child-comments-async
+    (comment-id marker &optional cursor show replace)
   "Load child comments for COMMENT-ID asynchronously at MARKER.
-CURSOR selects the next page; SHOW expands the subtree."
+CURSOR selects the page; SHOW expands the subtree; REPLACE clears the old
+child comments first (used by previous-page navigation)."
   (let ((buffer (current-buffer))
         (generation zhihu-reader--generation)
         (level (save-excursion
@@ -1661,6 +1669,10 @@ CURSOR selects the next page; SHOW expands the subtree."
            (let ((inhibit-read-only t))
              (goto-char marker)
              (org-back-to-heading t)
+             (when replace
+               (zhihu-reader--clear-comment-body marker)
+               (goto-char marker)
+               (org-back-to-heading t))
              (org-end-of-subtree)
              (insert "\n")
              (let ((comments (zhihu-reader--normalize-comments json)))
@@ -1767,14 +1779,20 @@ CURSOR selects the next page; SHOW expands the subtree."
          (root (nth 0 target))
          (id (nth 1 target))
          (kind (nth 2 target))
-         (marker (nth 3 target)))
-    (unless root
-      (user-error "子评论暂不支持上一页"))
-    (let ((previous (org-entry-get nil "ZHIHU-COMMENTS-PREV")))
-      (when (or (null previous) (string-empty-p previous))
-        (user-error "已经是第一页评论"))
-      (message "加载上一页评论…")
-      (zhihu-reader--load-comments-async id marker kind previous t))))
+         (marker (nth 3 target))
+         (comment-id (nth 4 target)))
+    (if root
+        (let ((previous (org-entry-get nil "ZHIHU-COMMENTS-PREV")))
+          (when (or (null previous) (string-empty-p previous))
+            (user-error "已经是第一页评论"))
+          (message "加载上一页评论…")
+          (zhihu-reader--load-comments-async id marker kind previous t))
+      (let ((previous (org-entry-get nil "ZHIHU-CHILDREN-PREV")))
+        (when (or (null previous) (string-empty-p previous))
+          (user-error "已经是第一页子评论"))
+        (message "加载上一页子评论…")
+        (zhihu-reader--load-child-comments-async
+         comment-id marker previous t t)))))
 
 (defun zhihu-reader-comments ()
   "Load root or child comments at point."
@@ -2660,12 +2678,16 @@ This is destructive and requires `zhihu-reader-enable-write'."
      (t nil))))
 
 (defun zhihu-reader--current-url ()
-  "Return a URL for the current heading or Org link."
+  "Return a canonical share URL for the current heading or Org link."
   (or (zhihu-reader--link-at-point)
       (let ((q (org-entry-get nil "ZHIHU-QUESTION"))
             (a (org-entry-get nil "ZHIHU-ANSWER"))
-            (article (org-entry-get nil "ZHIHU-ARTICLE")))
+            (article (org-entry-get nil "ZHIHU-ARTICLE"))
+            (comment (org-entry-get nil "ZHIHU-COMMENT")))
         (cond
+         (comment (format "https://www.zhihu.com/comment/%s" comment))
+         ((and a q)
+          (format "https://www.zhihu.com/question/%s/answer/%s" q a))
          (a (format "https://www.zhihu.com/answer/%s" a))
          (q (format "https://www.zhihu.com/question/%s" q))
          (article (format "https://zhuanlan.zhihu.com/p/%s" article))))))
@@ -2691,13 +2713,23 @@ This is destructive and requires `zhihu-reader-enable-write'."
                (format "https://zhuanlan.zhihu.com/p/%s" article)))
      (t (org-open-at-point)))))
 
-(defun zhihu-reader-copy-link ()
-  "Copy the current Zhihu link."
+(defun zhihu-reader-copy-share-link ()
+  "Copy the canonical share link for the content at point."
   (interactive)
   (let ((url (zhihu-reader--current-url)))
-    (if (and url (not (string-empty-p url)))
-        (progn (kill-new url) (message "已复制: %s" url))
-      (user-error "光标不在链接上"))))
+    (unless (and url (not (string-empty-p url)))
+      (user-error "光标不在问题、回答、文章或评论标题上"))
+    (kill-new url)
+    ;; In a graphical or XWayland session also write the system clipboard
+    ;; explicitly; `kill-new' alone is not enough for every selection setup.
+    (when (fboundp 'gui-set-selection)
+      (ignore-errors (gui-set-selection 'CLIPBOARD url)))
+    (message "已复制分享链接: %s" url)))
+
+(defun zhihu-reader-copy-link ()
+  "Copy the current Zhihu link (alias for share link)."
+  (interactive)
+  (zhihu-reader-copy-share-link))
 
 (defun zhihu-reader-read-url (url)
   "Read URL through EAF + Readability."
@@ -2843,21 +2875,30 @@ This is destructive and requires `zhihu-reader-enable-write'."
                         (zhihu-reader--normalize entry)))
                     (append data nil))))))
 
-(defun zhihu-reader-following ()
-  "Show the signed-in account's following feed."
-  (interactive)
-  (let ((url "https://api.zhihu.com/moments_v3?feed_type=recommend&limit=20")
-        (title "关注动态")
-        (key (list 'following nil)))
-    (if noninteractive
-        (let* ((resp (zhihu-reader--http-json "GET" url nil nil))
-               (items (zhihu-reader--normalize-moments
-                       (plist-get resp :json))))
-          (zhihu-reader--render title items key))
-      (zhihu-reader--async-list
-       title key url nil
-       (lambda (json) (cons title (zhihu-reader--normalize-moments json)))
-       key))))
+(defun zhihu-reader-following (&optional cursor)
+  "Show the signed-in account's following feed.
+CURSOR is an optional `moments_v3' paging URL."
+  (let* ((url (if (and cursor (stringp cursor)
+                       (string-prefix-p "https://api.zhihu.com/moments_v3" cursor))
+                  cursor
+                "https://api.zhihu.com/moments_v3?feed_type=recommend&limit=20"))
+         (resp (zhihu-reader--http-json "GET" url nil nil))
+         (json (plist-get resp :json))
+         (status (plist-get resp :status)))
+    (unless (memq status '(200 201))
+      (user-error "关注流加载失败 (HTTP %s)" status))
+    (let* ((paging (zhihu-reader--alist-get 'paging json))
+           (next (zhihu-reader--alist-get 'next paging))
+           (previous (zhihu-reader--alist-get 'previous paging))
+           (title "关注动态")
+           (view (list 'following cursor))
+           (items (zhihu-reader--normalize-moments json)))
+      (zhihu-reader--render title items view)
+      (with-current-buffer (or (get-buffer zhihu-reader--main-buffer)
+                               (current-buffer))
+        (setq-local zhihu-reader--following-next next)
+        (setq-local zhihu-reader--following-prev previous))
+      (message "关注动态：%d 条" (length items)))))
 
 (defun zhihu-reader-collection (id &optional page)
   "Open collection ID."
@@ -3133,6 +3174,15 @@ With FORCE non-nil, bypass the page cache."
       ('question (zhihu-reader-question (nth 1 view)
                                         (1+ (or (nth 2 view) 1))
                                         (nth 3 view)))
+      ('collection (zhihu-reader-collection (nth 1 view)
+                                            (1+ (or (nth 2 view) 1))))
+      ('topic (zhihu-reader-topic (nth 1 view)
+                                  (1+ (or (nth 2 view) 1))))
+      ('following
+       (let ((next zhihu-reader--following-next))
+         (unless (and next (not (string-empty-p next)))
+           (user-error "已经是最后一页关注动态"))
+         (zhihu-reader-following next)))
       (_ (user-error "当前视图没有下一页")))))
 
 (defun zhihu-reader-previous-page ()
@@ -3148,6 +3198,15 @@ With FORCE non-nil, bypass the page cache."
       ('question (zhihu-reader-question (nth 1 view)
                                          (max 1 (1- (or (nth 2 view) 1)))
                                          (nth 3 view)))
+      ('collection (zhihu-reader-collection (nth 1 view)
+                                            (max 1 (1- (or (nth 2 view) 1)))))
+      ('topic (zhihu-reader-topic (nth 1 view)
+                                  (max 1 (1- (or (nth 2 view) 1)))))
+      ('following
+       (let ((previous zhihu-reader--following-prev))
+         (unless (and previous (not (string-empty-p previous)))
+           (user-error "已经是第一页关注动态"))
+         (zhihu-reader-following previous)))
       (_ (user-error "当前视图没有上一页")))))
 
 (defun zhihu-reader--process-buffer-images (&optional beg end)
@@ -3227,7 +3286,8 @@ e       edit answer/comment\n\
 g       refresh current view\n\
 n/p     next/previous heading\n\
 o       open current URL with EAF + Readability\n\
-w       copy link\n\
+w       copy share link (🔗)\n\
+C-c w   copy share link\n\
 r       recommendation feed\n\
 h       hot list\n\
 s       search\n\
@@ -3267,7 +3327,8 @@ q       quit\n\
     (define-key map (kbd "C-c s") #'zhihu-reader-save-draft)
     (define-key map (kbd "e") #'zhihu-reader-edit-at-point)
     (define-key map (kbd "o") #'zhihu-reader-read-url-from-point)
-    (define-key map (kbd "w") #'zhihu-reader-copy-link)
+    (define-key map (kbd "w") #'zhihu-reader-copy-share-link)
+    (define-key map (kbd "C-c w") #'zhihu-reader-copy-share-link)
     (define-key map (kbd "s") #'zhihu-reader-search)
     (define-key map (kbd "S") #'zhihu-reader-sort)
     (define-key map (kbd "h") #'zhihu-reader-hot)

@@ -65,13 +65,15 @@ Recommendation and search results are grouped by question:
   links when ready.  `i` ensures the current buffer's images are loaded;
   `C-u i` turns inline images off.
 - `C-c ]` / `C-c [` load the next/previous root comment page using the
-  server-provided cursor.
+  server-provided cursor.  Child replies support both directions too.
 - `C-c v` upvotes (`C-u` downvotes) the answer/article at point.
 - `C-c f` follows/unfollows the author, question or topic at point.
 - `C-c t` thanks or un-thanks an answer.
 - `C-c F` adds an answer/article to a collection by collection ID.
 - `C-c b` bookmarks the current answer/article; `C-c B` opens the bookmark
   list.  `C-c m` / `C-c u` mark read/unread.
+- `w` or `C-c w` copies a canonical share link for the current question,
+  answer, article or comment (`🔗`).
 - Question descriptions are fetched with a native ZSE v4 signature.
 - Recommendation items are deduplicated by question/article ID.  Seen IDs
   persist in `~/.local/state/zhihu-reader/seen.eld`; clear them with
@@ -82,6 +84,8 @@ Recommendation and search results are grouped by question:
   requires `zhihu-reader-enable-write`.
 - Answer and comment headings show relative times (for example `3小时前`),
   not raw epoch timestamps.
+- `]` / `[` also page collections, topics and the following feed.  The
+  following feed uses the server-provided `paging.next` / `previous` cursor.
 
 ## Commands
 
@@ -153,7 +157,7 @@ i       toggle inline images
 g       refresh current view
 n/p     next/previous heading
 o       open current URL with EAF + Readability
-w       copy link
+w       copy share link（🔗）
 r       recommendation feed
 h       hot list
 s       search
