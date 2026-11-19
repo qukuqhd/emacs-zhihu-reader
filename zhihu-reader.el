@@ -1008,8 +1008,10 @@ ACTUAL is an optional loaded comment count."
 (defvar-local zhihu-reader--image-display-timer nil)
 
 (defun zhihu-reader--queue-image-display ()
-  "Debounce `org-display-inline-images' in the current buffer."
-  (when (display-graphic-p)
+  "Debounce inline image rendering in the current buffer.
+Links produced by the reader carry a description, so INCLUDE-LINKED must
+be non-nil; vanilla `org-display-inline-images' only renders bare links."
+  (when (and zhihu-reader-render-images (display-graphic-p))
     (when (timerp zhihu-reader--image-display-timer)
       (cancel-timer zhihu-reader--image-display-timer))
     (let ((buffer (current-buffer)))
@@ -1020,7 +1022,13 @@ ACTUAL is an optional loaded comment count."
                (when (buffer-live-p buf)
                  (with-current-buffer buf
                    (setq zhihu-reader--image-display-timer nil)
-                   (zhihu-reader--queue-image-display))))
+                   (when (and zhihu-reader-render-images
+                              (display-graphic-p))
+                     (setq-local org-image-actual-width
+                                 (list zhihu-reader-image-width))
+                     (ignore-errors
+                       (org-display-inline-images t t))
+                     (ignore-errors (force-window-update (current-buffer)))))))
              buffer)))))
 
 (defun zhihu-reader--image-start-loading ()
@@ -1056,6 +1064,7 @@ ACTUAL is an optional loaded comment count."
   "Return the cache file path for image URL."
   (let* ((parsed (url-generic-parse-url url))
          (filename (and (stringp (url-filename parsed)) (url-filename parsed)))
+         (filename (and filename (car (split-string filename "[?#]"))))
          (extension (or (and filename (file-name-extension filename)) "jpg"))
          (file (expand-file-name
                 (concat (secure-hash 'sha1 url) "." extension)
