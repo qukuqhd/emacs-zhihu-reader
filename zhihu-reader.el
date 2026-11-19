@@ -87,6 +87,12 @@ Written by `zhihu-reader-set-cookie' with mode 0600."
   :type 'string
   :group 'zhihu-reader)
 
+(defcustom zhihu-reader-bookmarks-file
+  (expand-file-name "~/.local/state/zhihu-reader/bookmarks.eld")
+  "File used to persist reader bookmarks."
+  :type 'file
+  :group 'zhihu-reader)
+
 (defcustom zhihu-reader-seen-file
   (expand-file-name "~/.local/state/zhihu-reader/seen.eld")
   "File used to persist recommendation IDs that have been shown."
@@ -293,18 +299,22 @@ Images are cached under `zhihu-reader-image-cache'.  Use
                              :false-object nil))
       (kill-buffer buf))))
 
-(defun zhihu-reader--fetch-json-async (url success &optional failure)
+(defun zhihu-reader--fetch-json-async (url success &optional failure sign)
   "Fetch URL asynchronously; call SUCCESS with JSON or FAILURE with a string.
-The request uses the current Zhihu cookies and does not block Emacs."
+When SIGN is non-nil add ZSE headers.  The request does not block Emacs."
   (let* ((cookie (zhihu-reader--require-login))
          (url-request-extra-headers
-          `(("Cookie" . ,cookie)
-            ("User-Agent" . ,zhihu-reader-user-agent)
-            ("Referer" . "https://www.zhihu.com/")
-            ("Origin" . "https://www.zhihu.com")
-            ("x-requested-with" . "fetch")
-            ("x-api-version" . "3.0.53")
-            ("Accept" . "application/json, text/plain, */*")))
+          (append
+           `(("Cookie" . ,cookie)
+             ("User-Agent" . ,zhihu-reader-user-agent)
+             ("Referer" . "https://www.zhihu.com/")
+             ("Origin" . "https://www.zhihu.com")
+             ("x-requested-with" . "fetch")
+             ("x-api-version" . "3.0.53")
+             ("Accept" . "application/json, text/plain, */*"))
+           (when sign
+             (zhihu-reader--zse-headers
+              url (cdr (assoc-string "d_c0" (zhihu-reader--cookie-alist)))))))
          (callback
           (lambda (status)
             (let ((request-buffer (current-buffer)))
@@ -432,7 +442,7 @@ The request uses the current Zhihu cookies and does not block Emacs."
       t)))
 
 (defun zhihu-reader--async-list (title view url buffer-name make-result
-                                      &optional cache-key)
+                                      &optional cache-key sign)
   "Fetch URL asynchronously and render the result in BUFFER-NAME.
 MAKE-RESULT receives JSON and returns (TITLE . ITEMS)."
   (let* ((buffer (zhihu-reader--prepare-buffer title view buffer-name))
@@ -455,7 +465,8 @@ MAKE-RESULT receives JSON and returns (TITLE . ITEMS)."
        (when (and (zhihu-reader--generation-current-p buffer generation)
                   (equal view
                          (buffer-local-value 'zhihu-reader--view buffer)))
-         (zhihu-reader--show-load-error buffer error))))))
+         (zhihu-reader--show-load-error buffer error)))
+     sign)))
 
 ;;;; Normalization
 
@@ -878,7 +889,10 @@ LIST-TYPE is `ul' or `ol' when inside a list."
              (marker-buffer marker)
              (buffer-live-p (marker-buffer marker)))
     (with-current-buffer (marker-buffer marker)
-      (ignore-errors (org-fold-show-all))
+      (save-excursion
+        (goto-char marker)
+        (ignore-errors (org-back-to-heading t))
+        (ignore-errors (org-fold-show-subtree)))
       (ignore-errors (force-window-update (current-buffer))))))
 
 (defun zhihu-reader--set-comment-status (marker status &optional actual)
@@ -897,10 +911,8 @@ ACTUAL is an optional loaded comment count."
                  (title
                   (pcase status
                     ("loading" (format "评论 (%s) · 加载中…" count))
-                    ("loaded" (format "评论 (%s) · 第 %s 页 · 已加载 %s 条"
-                                      count
-                                      (or (org-entry-get nil "ZHIHU-COMMENTS-PAGE") "1")
-                                      (or actual "")))
+                    ("loaded" (format "评论 (%s) · 已加载 %s 条"
+                                      count (or actual "")))
                     ("empty" (format "评论 (%s) · 无内容" count))
                     ("failed" (format "评论 (%s) · 加载失败" count))
                     (_ (format "评论 (%s) · c 加载" count)))))
@@ -953,6 +965,11 @@ ACTUAL is an optional loaded comment count."
 (defcustom zhihu-reader-auto-comments-limit 10
   "Maximum number of comment sections auto-loaded per render."
   :type 'integer
+  :group 'zhihu-reader)
+
+(defcustom zhihu-reader-comment-order "score"
+  "Zhihu comment sort order: `score' or `time'."
+  :type '(choice (const "score") (const "time"))
   :group 'zhihu-reader)
 
 (defvar zhihu-reader--comments-inflight (make-hash-table :test #'equal))
@@ -1316,15 +1333,14 @@ the target buffer."
   (format "https://www.zhihu.com/api/v4/answers/%s?include=content%%2Cexcerpt%%2Cauthor%%2Cquestion%%2Ccomment_count%%2Cvoteup_count"
           answer-id))
 
-(defun zhihu-reader--comments-url (id &optional kind offset)
-  "Return the root comments API URL for ID, KIND and OFFSET."
-  (pcase kind
-    ("article"
-     (format "https://www.zhihu.com/api/v4/comment_v5/articles/%s/root_comment?order_by=score&limit=20&offset=%d"
-             id (or offset 0)))
-    (_
-     (format "https://www.zhihu.com/api/v4/answers/%s/root_comments?order=normal&limit=20&offset=%d&status=open"
-             id (or offset 0)))))
+(defun zhihu-reader--comments-url (id &optional kind cursor)
+  "Return root comments URL for ID, KIND and optional CURSOR."
+  (if (and cursor (stringp cursor)
+           (string-prefix-p "https://www.zhihu.com/api/v4/comment_v5/" cursor))
+      cursor
+    (let ((type (if (equal kind "article") "articles" "answers")))
+      (format "https://www.zhihu.com/api/v4/comment_v5/%s/%s/root_comment?order_by=%s"
+              type id (if (equal zhihu-reader-comment-order "time") "ts" "score")))))
 
 (defun zhihu-reader--child-comments-url (comment-id &optional offset)
   "Return the child comments API URL for COMMENT-ID and OFFSET."
@@ -1340,9 +1356,15 @@ the target buffer."
          (cons (substring part 0 i) (substring part (1+ i))))))
    (split-string (zhihu-reader--cookies) "; " t)))
 
-(defun zhihu-reader--fetch-question-detail (_question-id)
-  "Question detail is not fetched without the external signing library."
-  nil)
+(defun zhihu-reader--fetch-question-detail (question-id)
+  "Fetch and return QUESTION-ID detail with a native ZSE signature."
+  (let* ((url (format "https://www.zhihu.com/api/v4/questions/%s?include=detail"
+                      question-id))
+         (resp (zhihu-reader--http-json "GET" url nil t))
+         (json (plist-get resp :json)))
+    (when (and (memq (plist-get resp :status) '(200 201))
+               (zhihu-reader--alist-get 'detail json))
+      json)))
 
 (defun zhihu-reader--attach-question-detail (items question-id)
   "Attach question detail and images to ITEMS."
@@ -1514,32 +1536,25 @@ With FORCE non-nil, bypass the page cache."
             (when (< start end)
               (delete-region start end))))))))
 
-(defun zhihu-reader--set-comment-paging (marker json offset &optional count)
-  "Set paging properties at MARKER from comment JSON, OFFSET and COUNT."
+(defun zhihu-reader--set-comment-paging (marker json)
+  "Set cursor properties at MARKER from comment JSON."
   (when (and (markerp marker) (buffer-live-p (marker-buffer marker)))
     (with-current-buffer (marker-buffer marker)
       (let* ((paging (zhihu-reader--alist-get 'paging json))
-             (is-end (zhihu-reader--alist-get 'is_end paging))
-             (has-next
-              (if (or (and count (>= count 20))
-                      (not (eq is-end t)))
-                  "1" "0")))
+             (next (zhihu-reader--alist-get 'next paging))
+             (previous (zhihu-reader--alist-get 'previous paging)))
         (save-excursion
           (goto-char marker)
-          (org-entry-put nil "ZHIHU-COMMENTS-OFFSET"
-                         (number-to-string offset))
-          (org-entry-put nil "ZHIHU-COMMENTS-PAGE"
-                         (number-to-string (1+ (/ offset 20))))
-          (org-entry-put nil "ZHIHU-COMMENTS-HAS-NEXT" has-next)
-          (org-entry-put nil "ZHIHU-COMMENTS-HAS-PREV"
-                         (if (> offset 0) "1" "0")))))))
+          (org-entry-put nil "ZHIHU-COMMENTS-NEXT" (or next ""))
+          (org-entry-put nil "ZHIHU-COMMENTS-PREV" (or previous ""))
+          (org-entry-put nil "ZHIHU-COMMENTS-HAS-NEXT" (if next "1" "0"))
+          (org-entry-put nil "ZHIHU-COMMENTS-HAS-PREV" (if previous "1" "0")))))))
 
-(defun zhihu-reader--load-comments-at (id marker kind &optional offset)
-  "Load root comments for ID at MARKER.
-KIND is \"answer\" or \"article\"; OFFSET selects the next page."
-  (let* ((offset (or offset 0))
-         (json (zhihu-reader--fetch-json
-                (zhihu-reader--comments-url id kind offset)))
+(defun zhihu-reader--load-comments-at (id marker kind &optional cursor)
+  "Load a root comments page for ID at MARKER.
+KIND is \"answer\" or \"article\"; CURSOR is an optional paging URL."
+  (let* ((json (zhihu-reader--fetch-json
+                (zhihu-reader--comments-url id kind cursor)))
          (comments (zhihu-reader--normalize-comments json))
          (level (save-excursion
                   (goto-char marker)
@@ -1553,24 +1568,22 @@ KIND is \"answer\" or \"article\"; OFFSET selects the next page."
       (unless comments
         (message "知乎返回 0 条评论（可能已删除或折叠）"))
       (zhihu-reader--clear-comment-body marker)
+      (zhihu-reader--insert-comments comments level)
+      (zhihu-reader--set-comment-paging marker json)
       (zhihu-reader--set-comment-status
        marker (if comments "loaded" "empty") (length comments))
-      (zhihu-reader--set-comment-paging marker json offset (length comments))
-      (zhihu-reader--insert-comments comments level)
       (save-excursion
         (goto-char marker)
-        (org-entry-put nil "ZHIHU-COMMENTS-LOADED" "t")
-        (org-entry-put nil "ZHIHU-COMMENTS-OFFSET" (number-to-string offset))
-        (zhihu-reader--show-comment-subtree marker)
-        (zhihu-reader--hide-drawers))
+        (org-entry-put nil "ZHIHU-COMMENTS-LOADED" "t"))
+      (zhihu-reader--show-comment-subtree marker)
+      (zhihu-reader--hide-drawers)
       (setq buffer-read-only t))))
 
-(defun zhihu-reader--load-comments-async (id marker kind &optional offset show)
-  "Load root comments for ID asynchronously at MARKER.
-KIND is \"answer\" or \"article\"; OFFSET selects the next page.
+(defun zhihu-reader--load-comments-async (id marker kind &optional cursor show)
+  "Load a root comments page for ID asynchronously at MARKER.
+KIND is \"answer\" or \"article\"; CURSOR is an optional paging URL.
 When SHOW is non-nil, expand the comments subtree."
-  (let ((offset (or offset 0))
-        (buffer (current-buffer))
+  (let ((buffer (current-buffer))
         (generation zhihu-reader--generation)
         (level (save-excursion
                  (goto-char marker)
@@ -1578,7 +1591,7 @@ When SHOW is non-nil, expand the comments subtree."
                  (1+ (org-current-level)))))
     (zhihu-reader--set-comment-status marker "loading")
     (zhihu-reader--fetch-json-async
-     (zhihu-reader--comments-url id kind offset)
+     (zhihu-reader--comments-url id kind cursor)
      (lambda (json)
        (unwind-protect
            (when (zhihu-reader--generation-current-p buffer generation)
@@ -1589,22 +1602,20 @@ When SHOW is non-nil, expand the comments subtree."
                  (org-end-of-subtree)
                  (insert "\n")
                  (let ((comments (zhihu-reader--normalize-comments json)))
-                 (unless comments
-                   (message "知乎返回 0 条评论（可能已删除或折叠）"))
-                 (zhihu-reader--clear-comment-body marker)
-                 (zhihu-reader--insert-comments comments level)
-                 (zhihu-reader--set-comment-paging marker json offset (length comments))
-                 (zhihu-reader--set-comment-status
-                  marker (if comments "loaded" "empty") (length comments)))
+                   (unless comments
+                     (message "知乎返回 0 条评论（可能已删除或折叠）"))
+                   (zhihu-reader--clear-comment-body marker)
+                   (zhihu-reader--insert-comments comments level)
+                   (zhihu-reader--set-comment-paging marker json)
+                   (zhihu-reader--set-comment-status
+                    marker (if comments "loaded" "empty") (length comments)))
                  (save-excursion
                    (goto-char marker)
-                   (org-entry-put nil "ZHIHU-COMMENTS-LOADED" "t")
-                   (org-entry-put nil "ZHIHU-COMMENTS-OFFSET"
-                                  (number-to-string offset))
-                   (if show
-                       (zhihu-reader--show-comment-subtree marker)
-                     (ignore-errors (org-fold-hide-subtree)))
-                   (zhihu-reader--hide-drawers))
+                   (org-entry-put nil "ZHIHU-COMMENTS-LOADED" "t"))
+                 (if show
+                     (zhihu-reader--show-comment-subtree marker)
+                   (ignore-errors (org-fold-hide-subtree)))
+                 (zhihu-reader--hide-drawers)
                  (setq buffer-read-only t))))
          (remhash id zhihu-reader--comments-inflight)))
      (lambda (error)
@@ -1670,6 +1681,43 @@ OFFSET selects the next page; SHOW expands the subtree."
       (user-error "光标不在评论标题上"))
     (list root id kind marker comment-id)))
 
+(defun zhihu-reader-comment-sort ()
+  "Change root comment sort order and reload the first page."
+  (interactive)
+  (let* ((target (zhihu-reader--comment-target))
+         (root (nth 0 target))
+         (id (nth 1 target))
+         (kind (nth 2 target))
+         (marker (nth 3 target)))
+    (unless root
+      (user-error "只能在根评论标题上切换排序"))
+    (setq zhihu-reader-comment-order
+          (completing-read "评论排序: "
+                           '("score" "time") nil t nil nil
+                           zhihu-reader-comment-order))
+    (save-excursion
+      (goto-char marker)
+      (org-entry-put nil "ZHIHU-COMMENTS-LOADED" nil))
+    (message "评论排序: %s" zhihu-reader-comment-order)
+    (zhihu-reader--load-comments-async id marker kind nil t)))
+
+(defun zhihu-reader-like-comment ()
+  "Toggle like on the comment at point."
+  (interactive)
+  (unless zhihu-reader-enable-write
+    (user-error "写操作已关闭；请设置 `zhihu-reader-enable-write' 为 t"))
+  (let* ((id (org-entry-get nil "ZHIHU-COMMENT"))
+         (liked (equal (org-entry-get nil "ZHIHU-COMMENT-LIKED") "t")))
+    (unless id
+      (user-error "光标不在评论标题上"))
+    (let* ((url (format "https://www.zhihu.com/api/v4/comments/%s/like" id))
+           (resp (zhihu-reader--http-json (if liked "DELETE" "POST") url nil))
+           (status (plist-get resp :status)))
+      (unless (memq status '(200 201 202 204))
+        (error "评论点赞失败 (HTTP %s): %s" status (plist-get resp :body)))
+      (org-entry-put nil "ZHIHU-COMMENT-LIKED" (if liked "nil" "t"))
+      (message (if liked "已取消点赞" "已点赞")))))
+
 (defun zhihu-reader-comments-more ()
   "Load the next page of comments at point."
   (interactive)
@@ -1679,16 +1727,17 @@ OFFSET selects the next page; SHOW expands the subtree."
          (kind (nth 2 target))
          (marker (nth 3 target))
          (comment-id (nth 4 target)))
-    (when (and root
-               (equal (org-entry-get nil "ZHIHU-COMMENTS-HAS-NEXT") "0"))
-      (user-error "已经是最后一页评论"))
-    (let* ((offset (string-to-number
-                    (or (org-entry-get nil "ZHIHU-COMMENTS-OFFSET") "0")))
-           (offset (if root (+ offset 20) offset)))
-      (message "加载下一页评论…")
-      (if root
-          (zhihu-reader--load-comments-async id marker kind offset t)
-        (zhihu-reader--load-child-comments-async comment-id marker offset t)))))
+    (if root
+        (let ((next (org-entry-get nil "ZHIHU-COMMENTS-NEXT")))
+          (when (or (null next) (string-empty-p next))
+            (user-error "已经是最后一页评论"))
+          (message "加载下一页评论…")
+          (zhihu-reader--load-comments-async id marker kind next t))
+      (let ((offset (string-to-number
+                     (or (org-entry-get nil "ZHIHU-CHILDREN-OFFSET") "0"))))
+        (message "加载下一页子评论…")
+        (zhihu-reader--load-child-comments-async
+         comment-id marker (+ offset 20) t)))))
 
 (defun zhihu-reader-comments-previous ()
   "Load the previous page of comments at point."
@@ -1700,13 +1749,11 @@ OFFSET selects the next page; SHOW expands the subtree."
          (marker (nth 3 target)))
     (unless root
       (user-error "子评论暂不支持上一页"))
-    (when (equal (org-entry-get nil "ZHIHU-COMMENTS-HAS-PREV") "0")
-      (user-error "已经是第一页评论"))
-    (let ((offset (max 0 (- (string-to-number
-                             (or (org-entry-get nil "ZHIHU-COMMENTS-OFFSET") "0"))
-                            20))))
+    (let ((previous (org-entry-get nil "ZHIHU-COMMENTS-PREV")))
+      (when (or (null previous) (string-empty-p previous))
+        (user-error "已经是第一页评论"))
       (message "加载上一页评论…")
-      (zhihu-reader--load-comments-async id marker kind offset t))))
+      (zhihu-reader--load-comments-async id marker kind previous t))))
 
 (defun zhihu-reader-comments ()
   "Load root or child comments at point."
@@ -1740,7 +1787,7 @@ OFFSET selects the next page; SHOW expands the subtree."
         (if noninteractive
             (zhihu-reader--load-comments-at id marker kind)
           (message "评论加载中…")
-          (zhihu-reader--load-comments-async id marker kind 0 t)))
+          (zhihu-reader--load-comments-async id marker kind nil t)))
        (t
         (if noninteractive
             (let ((comments (zhihu-reader--normalize-comments
@@ -1845,9 +1892,191 @@ OFFSET selects the next page; SHOW expands the subtree."
     (delay-mode-hooks (org-mode))
     (org-export-as 'html nil nil t nil)))
 
-(defun zhihu-reader--http-json (method url &optional body)
+(defconst zhihu-reader--zse-version "101_3_3.0")
+
+(defconst zhihu-reader--zse-zk
+  [1170614578 1024848638 1413669199 3951632832
+   3528873006 2921909214 4151847688 3997739139
+   1933479194 3323781115 3888513386 460404854
+   3747539722 2403641034 2615871395 2119585428
+   2265697227 2035090028 2773447226 4289380121
+   4217216195 2200601443 3051914490 1579901135
+   1321810770 456816404 2903323407 4065664991
+   330002838 3506006750 363569021 2347096187])
+
+(defconst zhihu-reader--zse-zb
+  [20 223 245 7 248 2 194 209 87 6 227 253 240 128 222 91
+   237 9 125 157 230 93 252 205 90 79 144 199 159 197 186 167
+   39 37 156 198 38 42 43 168 217 153 15 103 80 189 71 191
+   97 84 247 95 36 69 14 35 12 171 28 114 178 148 86 182
+   32 83 158 109 22 255 94 238 151 85 77 124 254 18 4 26
+   123 176 232 193 131 172 143 142 150 30 10 146 162 62 224 218
+   196 229 1 192 213 27 110 56 231 180 138 107 242 187 54 120
+   19 44 117 228 215 203 53 239 251 127 81 11 133 96 204 132
+   41 115 73 55 249 147 102 48 122 145 106 118 74 190 29 16
+   174 5 177 129 63 113 99 31 161 76 246 34 211 13 60 68
+   207 160 65 111 82 165 67 169 225 57 112 244 155 51 236 200
+   233 58 61 47 100 137 185 64 17 70 234 163 219 108 170 166
+   59 149 52 105 24 212 78 173 45 0 116 226 119 136 206 135
+   175 195 25 92 121 208 126 139 3 75 141 21 130 98 241 40
+   154 66 184 49 181 46 243 88 101 183 8 23 72 188 104 179
+   210 134 250 201 164 89 216 202 220 50 221 152 140 33 235 214])
+
+(defconst zhihu-reader--zse-alphabet
+  "6fpLRqJO8M/c3jnYxFkUVC4ZIG12SiH=5v0mXDazWBTsuw7QetbKdoPyAl+hN9rgE")
+
+(defconst zhihu-reader--zse-key (vconcat "059053f7d15e01d7"))
+
+(defun zhihu-reader--zse-rotl (n bits)
+  (setq n (logand n #xffffffff))
+  (logand #xffffffff (logior (ash n bits) (ash n (- bits 32)))))
+
+(defun zhihu-reader--zse-u32 (bytes pos)
+  (logior (ash (aref bytes pos) 24)
+          (ash (aref bytes (1+ pos)) 16)
+          (ash (aref bytes (+ pos 2)) 8)
+          (aref bytes (+ pos 3))))
+
+(defun zhihu-reader--zse-put-u32 (value bytes pos)
+  (dotimes (i 4)
+    (aset bytes (+ pos i)
+          (logand #xff (ash value (- (* 8 (- 3 i))))))))
+
+(defun zhihu-reader--zse-g (value)
+  (let* ((b0 (logand #xff (ash value -24)))
+         (b1 (logand #xff (ash value -16)))
+         (b2 (logand #xff (ash value -8)))
+         (b3 (logand #xff value))
+         (sub (logior (ash (aref zhihu-reader--zse-zb b0) 24)
+                      (ash (aref zhihu-reader--zse-zb b1) 16)
+                      (ash (aref zhihu-reader--zse-zb b2) 8)
+                      (aref zhihu-reader--zse-zb b3))))
+    (logand #xffffffff
+            (logxor sub
+                    (zhihu-reader--zse-rotl sub 2)
+                    (zhihu-reader--zse-rotl sub 10)
+                    (zhihu-reader--zse-rotl sub 18)
+                    (zhihu-reader--zse-rotl sub 24)))))
+
+(defun zhihu-reader--zse-round (input)
+  (let ((state (make-vector 36 0))
+        (output (make-vector 16 0)))
+    (dotimes (i 4)
+      (aset state i (zhihu-reader--zse-u32 input (* i 4))))
+    (dotimes (i 32)
+      (aset state (+ i 4)
+            (logand #xffffffff
+                    (logxor (aref state i)
+                            (zhihu-reader--zse-g
+                             (logxor (aref state (+ i 1))
+                                     (aref state (+ i 2))
+                                     (aref state (+ i 3))
+                                     (aref zhihu-reader--zse-zk i)))))))
+    (dotimes (i 4)
+      (zhihu-reader--zse-put-u32 (aref state (- 35 i))
+                                 output (* i 4)))
+    output))
+
+(defun zhihu-reader--zse-chain (data iv)
+  (let ((output (make-vector (length data) 0))
+        (offset 0))
+    (while (< offset (length data))
+      (let ((mixed (make-vector 16 0)))
+        (dotimes (i 16)
+          (aset mixed i (logxor (aref data (+ offset i)) (aref iv i))))
+        (setq iv (zhihu-reader--zse-round mixed))
+        (dotimes (i 16)
+          (aset output (+ offset i) (aref iv i))))
+      (setq offset (+ offset 16)))
+    output))
+
+(defun zhihu-reader--zse-encode (input)
+  (let* ((remainder (% (length input) 3))
+         (padding (if (zerop remainder) 0 (- 3 remainder)))
+         (bytes (make-vector (+ (length input) padding) 0))
+         (index 0)
+         (position (1- (+ (length input) padding)))
+         chars)
+    (dotimes (i (length input))
+      (aset bytes i (aref input i)))
+    (while (>= position 0)
+      (let ((value 0))
+        (dotimes (byte-index 3)
+          (let* ((byte (aref bytes (- position byte-index)))
+                 (mask (logand #xff (ash 58 (- (* 8 (% index 4)))))))
+            (setq index (1+ index))
+            (setq value (logior value
+                                (ash (logand #xff (logxor byte mask))
+                                     (* 8 byte-index))))))
+        (dotimes (i 4)
+          (push (aref zhihu-reader--zse-alphabet
+                      (logand 63 (ash value (- (* 6 i)))))
+                chars)))
+      (setq position (- position 3)))
+    (concat (nreverse chars))))
+
+(defun zhihu-reader--zse-uri-byte-p (byte)
+  (or (and (>= byte ?A) (<= byte ?Z))
+      (and (>= byte ?a) (<= byte ?z))
+      (and (>= byte ?0) (<= byte ?9))
+      (memq byte '(?- ?_ ?. ?! ?~ ?* ?' ?\( ?\)))))
+
+(defun zhihu-reader--zse-uri-bytes (input)
+  (let ((hex "0123456789ABCDEF")
+        encoded)
+    (dolist (byte (append (encode-coding-string input 'utf-8 t) nil))
+      (if (zhihu-reader--zse-uri-byte-p byte)
+          (push byte encoded)
+        (push ?% encoded)
+        (push (aref hex (ash byte -4)) encoded)
+        (push (aref hex (logand byte #x0f)) encoded)))
+    (vconcat (nreverse encoded))))
+
+(defun zhihu-reader--zse-encrypt (input)
+  (let* ((bytes (zhihu-reader--zse-uri-bytes input))
+         (unpadded (+ 2 (length bytes)))
+         (padding (- 16 (% unpadded 16)))
+         (plain (make-vector (+ unpadded padding) padding))
+         (first (make-vector 16 0))
+         cipher)
+    (aset plain 0 12)
+    (aset plain 1 0)
+    (dotimes (i (length bytes))
+      (aset plain (+ i 2) (aref bytes i)))
+    (dotimes (i 16)
+      (aset first i
+            (logand #xff
+                    (logxor (aref plain i) (aref zhihu-reader--zse-key i) 42))))
+    (let ((c0 (zhihu-reader--zse-round first)))
+      (setq cipher (make-vector (length plain) 0))
+      (dotimes (i 16)
+        (aset cipher i (aref c0 i)))
+      (when (> (length plain) 16)
+        (let ((rest (zhihu-reader--zse-chain (cl-subseq plain 16) c0)))
+          (dotimes (i (length rest))
+            (aset cipher (+ i 16) (aref rest i))))))
+    (zhihu-reader--zse-encode cipher)))
+
+(defun zhihu-reader--zse-path (url)
+  (let ((filename (url-filename (url-generic-parse-url url))))
+    (cond
+     ((string-empty-p filename) "/")
+     ((string-prefix-p "?" filename) (concat "/" filename))
+     (t filename))))
+
+(defun zhihu-reader--zse-headers (url dc0)
+  (when (and (stringp dc0) (not (string-empty-p dc0)))
+    (let* ((source (concat zhihu-reader--zse-version "+"
+                           (zhihu-reader--zse-path url) "+" dc0))
+           (digest (secure-hash 'md5
+                                (encode-coding-string source 'utf-8 t))))
+      `(("x-zse-93" . ,zhihu-reader--zse-version)
+        ("x-zse-96" . ,(concat "2.0_" (zhihu-reader--zse-encrypt digest)))))))
+
+(defun zhihu-reader--http-json (method url &optional body sign)
   "Send METHOD URL with BODY as JSON using the reader's cookies.
-Return a plist (:status :json :body).  No external HTTP package is used."
+When SIGN is non-nil, add Zhihu ZSE headers for the request.
+Return a plist (:status :json :body)."
   (let* ((cookies (zhihu-reader--cookie-alist))
          (xsrf (cdr (assoc-string "_xsrf" cookies)))
          (data (and body
@@ -1856,7 +2085,7 @@ Return a plist (:status :json :body).  No external HTTP package is used."
                                      :null-object :json-null
                                      :false-object :json-false)
                      'utf-8)))
-         (url-request-method (intern (upcase method)))
+         (url-request-method (upcase method))
          (url-request-extra-headers
           (append
            `(("Cookie" . ,(zhihu-reader--cookies))
@@ -1867,7 +2096,10 @@ Return a plist (:status :json :body).  No external HTTP package is used."
              ("Accept" . "application/json, text/plain, */*")
              ("Content-Type" . "application/json"))
            (when (and xsrf (not (string-empty-p xsrf)))
-             `(("x-xsrftoken" . ,xsrf)))))
+             `(("x-xsrftoken" . ,xsrf)))
+           (when sign
+             (zhihu-reader--zse-headers
+              url (cdr (assoc-string "d_c0" cookies))))))
          (url-request-data data))
     (with-current-buffer (url-retrieve-synchronously url t t 30)
       (unwind-protect
@@ -1886,6 +2118,132 @@ Return a plist (:status :json :body).  No external HTTP package is used."
                               (error nil))
                       :body text))))
         (kill-buffer (current-buffer))))))
+
+(defun zhihu-reader--http-form (method url fields)
+  "Send METHOD to URL with form-encoded FIELDS using reader cookies."
+  (let* ((cookies (zhihu-reader--cookie-alist))
+         (xsrf (cdr (assoc-string "_xsrf" cookies)))
+         (data (mapconcat (lambda (pair)
+                            (concat (url-hexify-string (car pair)) "="
+                                    (url-hexify-string (cdr pair))))
+                          fields "&"))
+         (url-request-method (upcase method))
+         (url-request-extra-headers
+          (append
+           `(("Cookie" . ,(zhihu-reader--cookies))
+             ("User-Agent" . ,zhihu-reader-user-agent)
+             ("Referer" . "https://www.zhihu.com/")
+             ("Origin" . "https://www.zhihu.com")
+             ("Accept" . "application/json, text/plain, */*")
+             ("Content-Type" . "application/x-www-form-urlencoded"))
+           (when (and xsrf (not (string-empty-p xsrf)))
+             `(("x-xsrftoken" . ,xsrf)))))
+         (url-request-data data))
+    (with-current-buffer (url-retrieve-synchronously url t t 30)
+      (unwind-protect
+          (progn
+            (goto-char (point-min))
+            (let ((status url-http-response-status))
+              (goto-char url-http-end-of-headers)
+              (decode-coding-region (point) (point-max) 'utf-8)
+              (list :status status
+                    :body (buffer-substring-no-properties (point) (point-max)))))
+        (kill-buffer (current-buffer))))))
+
+(defun zhihu-reader--action-check (resp action)
+  (let ((status (plist-get resp :status)))
+    (unless (memq status '(200 201 202 204))
+      (error "%s失败 (HTTP %s): %s" action status (plist-get resp :body)))
+    resp))
+
+(defun zhihu-reader--content-target ()
+  "Return (TYPE ID) for the answer or article at point."
+  (let ((answer (org-entry-get nil "ZHIHU-ANSWER" t))
+        (article (org-entry-get nil "ZHIHU-ARTICLE" t)))
+    (cond
+     (answer (list "answers" answer))
+     (article (list "articles" article))
+     (t (user-error "光标不在回答或文章标题上")))))
+
+(defun zhihu-reader-vote ()
+  "Upvote the answer or article at point; `C-u' downvotes."
+  (interactive)
+  (unless zhihu-reader-enable-write
+    (user-error "写操作已关闭；请设置 `zhihu-reader-enable-write' 为 t"))
+  (pcase-let* ((`(,type ,id) (zhihu-reader--content-target))
+               (down (equal current-prefix-arg '(4)))
+               (voted (equal (org-entry-get nil "ZHIHU-VOTED") "t"))
+               (next (if (and voted (not down)) "neutral" (if down "down" "up")))
+               (body (if (equal type "answers")
+                         (list :type next)
+                       (list :voting (if (equal next "up") 1 0))))
+               (url (format "https://www.zhihu.com/api/v4/%s/%s/voters" type id)))
+    (unless (yes-or-no-p (format "确认将状态改为 %s？" next))
+      (user-error "已取消"))
+    (zhihu-reader--action-check
+     (zhihu-reader--http-json "POST" url body nil)
+     "操作")
+    (org-entry-put nil "ZHIHU-VOTED" (if (equal next "neutral") "nil" "t"))
+    (message "已更新赞同状态: %s" next)))
+
+(defun zhihu-reader-follow ()
+  "Toggle following the author, question or topic at point."
+  (interactive)
+  (unless zhihu-reader-enable-write
+    (user-error "写操作已关闭；请设置 `zhihu-reader-enable-write' 为 t"))
+  (let* ((author (org-entry-get nil "ZHIHU-AUTHOR-TOKEN" t))
+         (question (org-entry-get nil "ZHIHU-QUESTION" t))
+         (topic (org-entry-get nil "ZHIHU-TOPIC" t))
+         (following (equal (org-entry-get nil "ZHIHU-FOLLOWING") "t"))
+         (target
+          (cond
+           (author (cons "members" author))
+           (question (cons "questions" question))
+           (topic (cons "topics" topic))
+           (t (user-error "光标不在作者、问题或话题标题上"))))
+         (url (format "https://www.zhihu.com/api/v4/%s/%s/followers"
+                      (car target) (cdr target))))
+    (unless (yes-or-no-p (format "%s关注？" (if following "取消" "确认")))
+      (user-error "已取消"))
+    (zhihu-reader--action-check
+     (zhihu-reader--http-json (if following "DELETE" "POST") url nil nil)
+     (if following "取消关注" "关注"))
+    (org-entry-put nil "ZHIHU-FOLLOWING" (if following "nil" "t"))
+    (message (if following "已取消关注" "已关注"))))
+
+(defun zhihu-reader-thank ()
+  "Thank the answer at point."
+  (interactive)
+  (unless zhihu-reader-enable-write
+    (user-error "写操作已关闭；请设置 `zhihu-reader-enable-write' 为 t"))
+  (let ((id (org-entry-get nil "ZHIHU-ANSWER" t)))
+    (unless id (user-error "光标不在回答标题上"))
+    (unless (yes-or-no-p "确认感谢这个回答？")
+      (user-error "已取消"))
+    (zhihu-reader--action-check
+     (zhihu-reader--http-json
+      "POST" (format "https://www.zhihu.com/api/v4/answers/%s/thank" id)
+      (list :thanks t) nil)
+     "感谢")
+    (message "已感谢")))
+
+(defun zhihu-reader-favorite ()
+  "Add the answer or article at point to a collection."
+  (interactive)
+  (unless zhihu-reader-enable-write
+    (user-error "写操作已关闭；请设置 `zhihu-reader-enable-write' 为 t"))
+  (pcase-let* ((`(,type ,id) (zhihu-reader--content-target))
+               (collection (read-string "收藏夹 ID: ")))
+    (when (string-empty-p collection)
+      (user-error "收藏夹 ID 为空"))
+    (unless (yes-or-no-p (format "加入收藏夹 %s？" collection))
+      (user-error "已取消"))
+    (zhihu-reader--action-check
+     (zhihu-reader--http-form
+      "PUT" (format "https://api.zhihu.com/collections/contents/%s/%s" type id)
+      (list (cons "add_collections" collection)))
+     "收藏")
+    (message "已加入收藏夹")))
 
 (defun zhihu-reader--response-id (json)
   "Extract a content id from a publish response JSON."
@@ -2433,6 +2791,174 @@ This is destructive and requires `zhihu-reader-enable-write'."
     (delete-file zhihu-reader-seen-file))
   (message "推荐去重记录已清空"))
 
+(defun zhihu-reader--normalize-wrapped-items (json)
+  "Normalize collection-style JSON entries that wrap content."
+  (let ((data (zhihu-reader--alist-get 'data json)))
+    (when (vectorp data)
+      (delq nil
+            (mapcar
+             (lambda (entry)
+               (let ((content (zhihu-reader--alist-get 'content entry))
+                     (type (zhihu-reader--alist-get 'type entry)))
+                 (if content
+                     (zhihu-reader--normalize
+                      (list (cons 'target content) (cons 'type type)))
+                   (zhihu-reader--normalize entry))))
+             (append data nil))))))
+
+(defun zhihu-reader--normalize-moments (json)
+  "Normalize moments_v3 JSON."
+  (let ((data (zhihu-reader--alist-get 'data json)))
+    (when (vectorp data)
+      (delq nil
+            (mapcar (lambda (entry)
+                      (when (zhihu-reader--alist-get 'target entry)
+                        (zhihu-reader--normalize entry)))
+                    (append data nil))))))
+
+(defun zhihu-reader-following ()
+  "Show the signed-in account's following feed."
+  (interactive)
+  (let ((url "https://api.zhihu.com/moments_v3?feed_type=recommend&limit=20")
+        (title "关注动态")
+        (key (list 'following nil)))
+    (if noninteractive
+        (let* ((resp (zhihu-reader--http-json "GET" url nil nil))
+               (items (zhihu-reader--normalize-moments
+                       (plist-get resp :json))))
+          (zhihu-reader--render title items key))
+      (zhihu-reader--async-list
+       title key url nil
+       (lambda (json) (cons title (zhihu-reader--normalize-moments json)))
+       key))))
+
+(defun zhihu-reader-collection (id &optional page)
+  "Open collection ID."
+  (interactive
+   (list (or (read-string "知乎收藏夹 ID: ")
+             (user-error "收藏夹 ID 为空"))
+         (prefix-numeric-value current-prefix-arg)))
+  (let* ((page (or page 1))
+         (url (format "https://www.zhihu.com/api/v4/collections/%s/items?limit=20&offset=%d"
+                      id (* 20 (1- page))))
+         (title (format "收藏夹 %s · 第 %d 页" id page))
+         (key (list 'collection id page)))
+    (if noninteractive
+        (zhihu-reader--render title
+                              (zhihu-reader--normalize-wrapped-items
+                               (zhihu-reader--fetch-json url))
+                              key)
+      (zhihu-reader--async-list
+       title key url nil
+       (lambda (json)
+         (cons title (zhihu-reader--normalize-wrapped-items json)))
+       key))))
+
+(defun zhihu-reader-topic (id &optional page)
+  "Open topic ID's hot feed."
+  (interactive
+   (list (or (read-string "知乎话题 ID: ")
+             (user-error "话题 ID 为空"))
+         (prefix-numeric-value current-prefix-arg)))
+  (let* ((page (or page 1))
+         (url (format "https://www.zhihu.com/api/v5.1/topics/%s/feeds/essence?limit=20&offset=%d"
+                      id (* 20 (1- page))))
+         (title (format "话题 %s · 第 %d 页" id page))
+         (key (list 'topic id page)))
+    (if noninteractive
+        (zhihu-reader--render title
+                              (zhihu-reader--normalize-items
+                               (plist-get (zhihu-reader--http-json "GET" url nil t)
+                                          :json))
+                              key)
+      (zhihu-reader--async-list
+       title key url nil
+       (lambda (json) (cons title (zhihu-reader--normalize-items json)))
+       key t))))
+
+(defun zhihu-reader--load-bookmarks ()
+  "Return the persisted bookmark list."
+  (if (file-readable-p zhihu-reader-bookmarks-file)
+      (condition-case nil
+          (with-temp-buffer
+            (insert-file-contents zhihu-reader-bookmarks-file)
+            (read (current-buffer)))
+        (error nil))
+    nil))
+
+(defun zhihu-reader--save-bookmarks (bookmarks)
+  "Persist BOOKMARKS."
+  (make-directory (file-name-directory zhihu-reader-bookmarks-file) t)
+  (with-temp-file zhihu-reader-bookmarks-file
+    (prin1 bookmarks (current-buffer))))
+
+(defun zhihu-reader-bookmark ()
+  "Bookmark the answer or article at point."
+  (interactive)
+  (pcase-let* ((`(,type ,id) (zhihu-reader--content-target))
+               (title (string-trim (org-get-heading t t t t)))
+               (url (pcase type
+                      ("answers"
+                       (format "https://www.zhihu.com/answer/%s" id))
+                      (_ (format "https://zhuanlan.zhihu.com/p/%s" id))))
+               (bookmarks (zhihu-reader--load-bookmarks))
+               (entry (list :id id :type type :title title :url url
+                            :saved (float-time))))
+    (setq bookmarks (cons entry (seq-remove
+                                 (lambda (item)
+                                   (and (equal (plist-get item :id) id)
+                                        (equal (plist-get item :type) type)))
+                                 bookmarks)))
+    (zhihu-reader--save-bookmarks bookmarks)
+    (message "已加入书签")))
+
+(defun zhihu-reader-bookmarks ()
+  "Show saved reader bookmarks."
+  (interactive)
+  (let ((buffer (get-buffer-create "*Zhihu Bookmarks*"))
+        (bookmarks (zhihu-reader--load-bookmarks)))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (zhihu-reader-mode)
+        (insert "#+TITLE: 知乎书签\n#+STARTUP: overview\n\n")
+        (if (null bookmarks)
+            (insert "还没有书签。\n")
+          (dolist (item bookmarks)
+            (insert (format "* [[%s][%s]]\n  %s\n"
+                            (plist-get item :url)
+                            (org-link-escape (plist-get item :title))
+                            (format-time-string
+                             "%Y-%m-%d %H:%M"
+                             (seconds-to-time (or (plist-get item :saved) 0)))))))
+        (goto-char (point-min))
+        (setq buffer-read-only t)))
+    (pop-to-buffer buffer)))
+
+(defun zhihu-reader-mark-read ()
+  "Mark the answer or article at point as read."
+  (interactive)
+  (let ((target (zhihu-reader--content-target)))
+    (zhihu-reader--load-seen)
+    (puthash (format "%s:%s"
+                     (if (equal (car target) "answers") "answer" "article")
+                     (cadr target))
+             t zhihu-reader--seen)
+    (zhihu-reader--save-seen)
+    (message "已标记为已读")))
+
+(defun zhihu-reader-mark-unread ()
+  "Mark the answer or article at point as unread."
+  (interactive)
+  (let ((target (zhihu-reader--content-target)))
+    (zhihu-reader--load-seen)
+    (remhash (format "%s:%s"
+                     (if (equal (car target) "answers") "answer" "article")
+                     (cadr target))
+             zhihu-reader--seen)
+    (zhihu-reader--save-seen)
+    (message "已标记为未读")))
+
 (defun zhihu-reader--normalize-feed (json)
   "Normalize JSON and filter already-seen recommendations."
   (zhihu-reader--filter-seen (zhihu-reader--normalize-items json)))
@@ -2659,6 +3185,15 @@ RET     enter question/answer\n\
 c       load comments\n\
 C-c ]   next comments page\n\
 C-c [   previous comments page\n\
+C-c o   comment sort order\n\
+C-c l   like/unlike comment\n\
+C-c v   upvote/downvote\n\
+C-c f   follow/unfollow\n\
+C-c t   thank answer\n\
+C-c F   add to collection\n\
+C-c b   bookmark\n\
+C-c B   bookmark list\n\
+C-c m/u mark read/unread\n\
 C-c c   write a comment/reply\n\
 C-c a   author page\n\
 e       edit answer/comment\n\
@@ -2688,6 +3223,16 @@ q       quit\n\
     (define-key map (kbd "c") #'zhihu-reader-comments)
     (define-key map (kbd "C-c ]") #'zhihu-reader-comments-more)
     (define-key map (kbd "C-c [") #'zhihu-reader-comments-previous)
+    (define-key map (kbd "C-c o") #'zhihu-reader-comment-sort)
+    (define-key map (kbd "C-c l") #'zhihu-reader-like-comment)
+    (define-key map (kbd "C-c v") #'zhihu-reader-vote)
+    (define-key map (kbd "C-c f") #'zhihu-reader-follow)
+    (define-key map (kbd "C-c t") #'zhihu-reader-thank)
+    (define-key map (kbd "C-c F") #'zhihu-reader-favorite)
+    (define-key map (kbd "C-c b") #'zhihu-reader-bookmark)
+    (define-key map (kbd "C-c B") #'zhihu-reader-bookmarks)
+    (define-key map (kbd "C-c m") #'zhihu-reader-mark-read)
+    (define-key map (kbd "C-c u") #'zhihu-reader-mark-unread)
     (define-key map (kbd "C-c c") #'zhihu-reader-compose-comment)
     (define-key map (kbd "C-c a") #'zhihu-reader-author)
     (define-key map (kbd "C-c n") #'zhihu-reader-new-answer)
@@ -2727,7 +3272,7 @@ Limit to `zhihu-reader-auto-comments-limit' sections."
                  (puthash id t zhihu-reader--comments-inflight)
                  (setq count (1+ count))
                  (zhihu-reader--load-comments-async
-                  id (point-marker) kind 0 t))))))))))
+                  id (point-marker) kind nil t))))))))))
 
 (defun zhihu-reader--after-cycle (state &rest _)
   "Load comments and images after a visibility STATE change."
@@ -2742,8 +3287,9 @@ Limit to `zhihu-reader-auto-comments-limit' sections."
               (zhihu-reader--auto-load-comments beg end)
               (when (and zhihu-reader-render-images (display-graphic-p))
                 (zhihu-reader--process-buffer-images beg end))
-              ;; Refresh the outline/body after async insertions.
-              (ignore-errors (org-fold-show-all))
+              ;; Refresh only the current subtree; never expand every
+              ;; top-level question after a page switch.
+              (ignore-errors (org-fold-show-subtree))
               (ignore-errors (force-window-update (current-buffer)))))
         (error nil)))))
 
