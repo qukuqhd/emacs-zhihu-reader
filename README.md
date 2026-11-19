@@ -7,6 +7,24 @@ A Zhihu reader and writer for Emacs, modeled after:
 - `crispyChicken999/zhihu-fisher-vscode`: hot list, search, question/answer
   detail, comments and nested reading
 
+## Files
+
+The implementation is split into focused modules; `zhihu-reader.el` is the
+entry point that loads them in dependency order.
+
+```text
+zhihu-reader.el            entry point
+zhihu-reader-core.el       settings, cookies, HTTP, normalization
+zhihu-reader-api.el        ZSE signing, write actions, publishing
+zhihu-reader-ui.el         Org rendering, images, mode and key map
+zhihu-reader-comments.el   comment trees, cursor paging and composition
+zhihu-reader-edit.el       editing, drafts and article publishing
+zhihu-reader-views.el      feed, hot, search, question/answer and navigation
+```
+
+All files must stay on the same `load-path`; requiring `zhihu-reader`
+loads the rest.
+
 ## Architecture
 
 ```text
