@@ -2172,6 +2172,8 @@ Return a plist (:status :json :body)."
     (user-error "写操作已关闭；请设置 `zhihu-reader-enable-write' 为 t"))
   (pcase-let* ((`(,type ,id) (zhihu-reader--content-target))
                (down (equal current-prefix-arg '(4)))
+               (_ (when (and down (equal type "articles"))
+                    (user-error "知乎文章没有可确认的反对操作")))
                (voted (equal (org-entry-get nil "ZHIHU-VOTED") "t"))
                (next (if (and voted (not down)) "neutral" (if down "down" "up")))
                (body (if (equal type "answers")
