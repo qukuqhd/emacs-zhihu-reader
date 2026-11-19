@@ -168,6 +168,9 @@ Images are cached under `zhihu-reader-image-cache'.  Use
 (defvar-local zhihu-reader--following-prev nil
   "Previous cursor URL for the following feed.")
 
+(defvar-local zhihu-reader--collection-has-next nil
+  "Non-nil when the current collection view has another page.")
+
 (defvar-local zhihu-reader--generation 0
   "Incremented whenever a reader buffer is replaced.")
 
@@ -448,9 +451,10 @@ When SIGN is non-nil add ZSE headers.  The request does not block Emacs."
       t)))
 
 (defun zhihu-reader--async-list (title view url buffer-name make-result
-                                      &optional cache-key sign)
+                                      &optional cache-key sign after-render)
   "Fetch URL asynchronously and render the result in BUFFER-NAME.
-MAKE-RESULT receives JSON and returns (TITLE . ITEMS)."
+MAKE-RESULT receives JSON and returns (TITLE . ITEMS).
+AFTER-RENDER is called with JSON after rendering."
   (let* ((buffer (zhihu-reader--prepare-buffer title view buffer-name))
          (generation (with-current-buffer buffer zhihu-reader--generation)))
     (zhihu-reader--fetch-json-async
@@ -465,7 +469,9 @@ MAKE-RESULT receives JSON and returns (TITLE . ITEMS)."
                  (puthash cache-key result zhihu-reader--page-cache))
                (zhihu-reader--render (car result) (cdr result) view buffer-name)
                (when cache-key
-                 (zhihu-reader--restore-point cache-key)))
+                 (zhihu-reader--restore-point cache-key))
+               (when after-render
+                 (funcall after-render json)))
            (error (zhihu-reader--show-load-error buffer (error-message-string err))))))
      (lambda (error)
        (when (and (zhihu-reader--generation-current-p buffer generation)
@@ -2882,23 +2888,46 @@ CURSOR is an optional `moments_v3' paging URL."
                        (string-prefix-p "https://api.zhihu.com/moments_v3" cursor))
                   cursor
                 "https://api.zhihu.com/moments_v3?feed_type=recommend&limit=20"))
-         (resp (zhihu-reader--http-json "GET" url nil nil))
-         (json (plist-get resp :json))
-         (status (plist-get resp :status)))
-    (unless (memq status '(200 201))
-      (user-error "关注流加载失败 (HTTP %s)" status))
-    (let* ((paging (zhihu-reader--alist-get 'paging json))
-           (next (zhihu-reader--alist-get 'next paging))
-           (previous (zhihu-reader--alist-get 'previous paging))
-           (title "关注动态")
-           (view (list 'following cursor))
-           (items (zhihu-reader--normalize-moments json)))
-      (zhihu-reader--render title items view)
-      (with-current-buffer (or (get-buffer zhihu-reader--main-buffer)
-                               (current-buffer))
-        (setq-local zhihu-reader--following-next next)
-        (setq-local zhihu-reader--following-prev previous))
-      (message "关注动态：%d 条" (length items)))))
+         (title "关注动态")
+         (view (list 'following cursor)))
+    (if noninteractive
+        (let* ((resp (zhihu-reader--http-json "GET" url nil nil))
+               (json (plist-get resp :json)))
+          (unless (memq (plist-get resp :status) '(200 201))
+            (user-error "关注流加载失败 (HTTP %s)" (plist-get resp :status)))
+          (let* ((paging (zhihu-reader--alist-get 'paging json))
+                 (items (zhihu-reader--normalize-moments json)))
+            (zhihu-reader--render title items view)
+            (with-current-buffer (get-buffer zhihu-reader--main-buffer)
+              (setq-local zhihu-reader--following-next
+                          (zhihu-reader--alist-get 'next paging))
+              (setq-local zhihu-reader--following-prev
+                          (zhihu-reader--alist-get 'previous paging)))))
+      (let* ((buffer (zhihu-reader--prepare-buffer title view nil))
+             (generation (with-current-buffer buffer zhihu-reader--generation)))
+        (zhihu-reader--fetch-json-async
+         url
+         (lambda (json)
+           (when (and (zhihu-reader--generation-current-p buffer generation)
+                      (equal view
+                             (buffer-local-value 'zhihu-reader--view buffer)))
+             (condition-case err
+                 (with-current-buffer buffer
+                   (let* ((paging (zhihu-reader--alist-get 'paging json))
+                          (items (zhihu-reader--normalize-moments json)))
+                     (zhihu-reader--render title items view buffer)
+                     (setq-local zhihu-reader--following-next
+                                 (zhihu-reader--alist-get 'next paging))
+                     (setq-local zhihu-reader--following-prev
+                                 (zhihu-reader--alist-get 'previous paging))
+                     (message "关注动态：%d 条" (length items))))
+               (error (zhihu-reader--show-load-error
+                       buffer (error-message-string err))))))
+         (lambda (error)
+           (when (and (zhihu-reader--generation-current-p buffer generation)
+                      (equal view
+                             (buffer-local-value 'zhihu-reader--view buffer)))
+             (zhihu-reader--show-load-error buffer error))))))))
 
 (defun zhihu-reader-collection (id &optional page)
   "Open collection ID."
@@ -2912,15 +2941,26 @@ CURSOR is an optional `moments_v3' paging URL."
          (title (format "收藏夹 %s · 第 %d 页" id page))
          (key (list 'collection id page)))
     (if noninteractive
-        (zhihu-reader--render title
-                              (zhihu-reader--normalize-wrapped-items
-                               (zhihu-reader--fetch-json url))
-                              key)
+        (let* ((json (zhihu-reader--fetch-json url))
+               (paging (zhihu-reader--alist-get 'paging json)))
+          (zhihu-reader--render title
+                                (zhihu-reader--normalize-wrapped-items json)
+                                key)
+          (with-current-buffer (get-buffer zhihu-reader--main-buffer)
+            (setq-local zhihu-reader--collection-has-next
+                        (and (zhihu-reader--alist-get 'next paging)
+                             (not (eq (zhihu-reader--alist-get 'is_end paging) t))))))
       (zhihu-reader--async-list
        title key url nil
        (lambda (json)
          (cons title (zhihu-reader--normalize-wrapped-items json)))
-       key))))
+       key nil
+       (lambda (json)
+         (let ((paging (zhihu-reader--alist-get 'paging json)))
+           (with-current-buffer (get-buffer zhihu-reader--main-buffer)
+             (setq-local zhihu-reader--collection-has-next
+                         (and (zhihu-reader--alist-get 'next paging)
+                              (not (eq (zhihu-reader--alist-get 'is_end paging) t)))))))))))
 
 (defun zhihu-reader-topic (id &optional page)
   "Open topic ID's hot feed."
@@ -3174,8 +3214,11 @@ With FORCE non-nil, bypass the page cache."
       ('question (zhihu-reader-question (nth 1 view)
                                         (1+ (or (nth 2 view) 1))
                                         (nth 3 view)))
-      ('collection (zhihu-reader-collection (nth 1 view)
-                                            (1+ (or (nth 2 view) 1))))
+      ('collection
+       (unless zhihu-reader--collection-has-next
+         (user-error "已经是最后一页收藏夹"))
+       (zhihu-reader-collection (nth 1 view)
+                                (1+ (or (nth 2 view) 1))))
       ('topic (zhihu-reader-topic (nth 1 view)
                                   (1+ (or (nth 2 view) 1))))
       ('following

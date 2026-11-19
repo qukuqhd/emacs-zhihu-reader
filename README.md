@@ -85,7 +85,8 @@ Recommendation and search results are grouped by question:
 - Answer and comment headings show relative times (for example `3小时前`),
   not raw epoch timestamps.
 - `]` / `[` also page collections, topics and the following feed.  The
-  following feed uses the server-provided `paging.next` / `previous` cursor.
+  following feed uses the server-provided `paging.next` / `previous` cursor
+  and loads asynchronously.  Collection pagination stops at the last page.
 
 ## Commands
 
