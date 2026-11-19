@@ -3304,42 +3304,62 @@ With prefix argument OFF, disable inline images instead."
       (user-error "光标不在链接或知乎标题上"))))
 
 (defun zhihu-reader-help ()
-  "Show Zhihu reader key bindings."
+  "显示知乎阅读器的按键说明。"
   (interactive)
   (with-help-window "*Zhihu Help*"
     (princ
-     "Zhihu Reader\n\n\
-TAB     fold/unfold\n\
-RET     enter question/answer\n\
-c       load comments\n\
-C-c ]   next comments page\n\
-C-c [   previous comments page\n\
-C-c o   comment sort order\n\
-C-c l   like/unlike comment\n\
-C-c v   upvote/downvote\n\
-C-c f   follow/unfollow\n\
-C-c t   thank answer\n\
-C-c F   add to collection\n\
-C-c b   bookmark\n\
-C-c B   bookmark list\n\
-C-c m/u mark read/unread\n\
-C-c c   write a comment/reply\n\
-C-c a   author page\n\
-e       edit answer/comment\n\
-g       refresh current view\n\
-n/p     next/previous heading\n\
-o       open current URL with EAF + Readability\n\
-w       copy share link (🔗)\n\
-C-c w   copy share link\n\
-r       recommendation feed\n\
-h       hot list\n\
-s       search\n\
-S       answer sort order (question view)\n\
-] / [   next/previous page\n\
-i       toggle inline images\n\
-q       quit\n\
-?       this help\n")))
+     "知乎阅读器
 
+【浏览】
+  TAB       折叠 / 展开当前标题
+  RET       进入问题、回答或打开链接
+  n / p     下一个 / 上一个标题
+  ] / [     下一页 / 上一页
+  g         刷新当前视图
+  q         关闭当前窗口
+  ?         显示本帮助
+
+【评论】
+  c         加载评论或子评论
+  C-c ]     下一页评论
+  C-c [     上一页评论
+  C-c o     切换评论排序（score / time）
+  C-c l     点赞 / 取消点赞评论
+  C-c c     发表评论或回复
+
+【内容操作】
+  C-c v     赞同 / 取消赞同；C-u 反对
+  C-c f     关注 / 取消关注
+  C-c t     感谢 / 取消感谢回答
+  C-c F     加入收藏夹
+  C-c b     收藏当前内容为书签
+  C-c B     打开书签列表
+  C-c m     标记已读
+  C-c u     标记未读
+  C-c a     查看作者主页
+  e         编辑回答或评论
+
+【分享与阅读】
+  w         复制分享链接（🔗）
+  C-c w     复制分享链接
+  o         用 EAF + Readability 打开当前链接
+  i         切换内联图片
+
+【入口】
+  r         推荐流
+  h         热榜
+  s         搜索
+  S         回答排序（问题视图）
+
+全局快捷键：
+  C-c Z     推荐流
+  C-c H     热榜
+  C-c S     搜索
+  C-c C-Z   通过 URL 阅读
+  C-c G     关注动态
+  C-c T     话题
+  C-c L     收藏夹
+")))
 (defvar zhihu-reader-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'zhihu-reader-open-at-point)
