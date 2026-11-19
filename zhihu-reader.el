@@ -1924,6 +1924,34 @@ OFFSET selects the next page; SHOW expands the subtree."
       (goto-char (point-min)))
     (pop-to-buffer buffer)))
 
+(defun zhihu-reader-publish-article ()
+  "Publish the current Zhihu article Org source file.
+This uses the bundled zhihu.el machinery directly, not `zhihu-publish',
+and respects `zhihu-reader-enable-write'."
+  (interactive)
+  (unless zhihu-reader-enable-write
+    (user-error "写操作已关闭；请设置 `zhihu-reader-enable-write' 为 t"))
+  (unless buffer-file-name
+    (user-error "当前 buffer 没有对应的 Org 源文件"))
+  (unless (derived-mode-p 'org-mode)
+    (user-error "当前 buffer 不是 Org 文件"))
+  (when (buffer-modified-p)
+    (save-buffer))
+  (zhihu-reader--ensure-zhihu)
+  (let* ((file buffer-file-name)
+         (meta (zhihu--read-source-meta file)))
+    (unless (eq (plist-get meta :kind) 'article)
+      (user-error "当前源稿不是知乎文章"))
+    (unless (yes-or-no-p
+             (format "确认发布文章「%s」？"
+                     (or (plist-get meta :title) "")))
+      (user-error "已取消发布"))
+    (let ((id (zhihu--publish-article-file
+               (zhihu--make-xsrf-state) file meta)))
+      (revert-buffer t t t)
+      (message "文章已发布：%s" id)
+      id)))
+
 (defun zhihu-reader-new-article (title)
   "Create a new Zhihu article Org source file."
   (interactive "s文章标题: ")
@@ -1954,7 +1982,8 @@ OFFSET selects the next page; SHOW expands the subtree."
           (require 'zhihu)
           (when (fboundp 'zhihu-mode) (zhihu-mode 1)))
       (error nil))
-    (message "文章源稿已创建: %s\n发布: M-x zhihu-publish" file)))
+    (local-set-key (kbd "C-c C-p") #'zhihu-reader-publish-article)
+    (message "文章源稿已创建: %s\n发布: C-c C-p 或 M-x zhihu-reader-publish-article" file)))
 
 (defun zhihu-reader-new-answer (question-id)
   "Start a new answer draft for QUESTION-ID."
