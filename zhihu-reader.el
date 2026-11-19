@@ -42,6 +42,7 @@
 (require 'org)
 (require 'org-element)
 (require 'dom)
+(require 'xml)
 (require 'sqlite)
 
 (defgroup zhihu-reader nil
@@ -128,12 +129,6 @@ Written by `zhihu-reader-set-cookie' with mode 0600."
   "Enable destructive Zhihu operations such as editing answers or comments.
 Leave this nil for read-only browsing."
   :type 'boolean
-  :group 'zhihu-reader)
-
-(defcustom zhihu-reader-zhihu-library-path
-  (expand-file-name "~/.emacs.d/site-lisp/zhihu-el")
-  "Directory containing zhihu.el, ox-zhihu.el and plz.el."
-  :type 'directory
   :group 'zhihu-reader)
 
 (defcustom zhihu-reader-max-excerpt 1200
@@ -1345,32 +1340,9 @@ the target buffer."
          (cons (substring part 0 i) (substring part (1+ i))))))
    (split-string (zhihu-reader--cookies) "; " t)))
 
-(defun zhihu-reader--fetch-question-detail (question-id)
-  "Fetch question detail JSON with ZSE signing, or nil."
-  (condition-case nil
-      (progn
-        (zhihu-reader--ensure-zhihu)
-        (let* ((cookie (zhihu-reader--cookies))
-               (dc0 (cdr (assoc-string "d_c0" (zhihu-reader--cookie-alist))))
-               (url (format "https://www.zhihu.com/api/v4/questions/%s?include=detail"
-                            question-id))
-               (url-request-extra-headers
-                (append (zhihu--zse-request-headers url nil dc0)
-                        (list (cons "Cookie" cookie)
-                              (cons "Referer" "https://www.zhihu.com/")
-                              (cons "Accept" "application/json, text/plain, */*")))))
-          (with-current-buffer (url-retrieve-synchronously url t t 20)
-            (unwind-protect
-                (progn
-                  (goto-char (point-min))
-                  (when (equal url-http-response-status 200)
-                    (goto-char url-http-end-of-headers)
-                    (decode-coding-region (point) (point-max) 'utf-8)
-                    (json-parse-buffer :object-type 'alist
-                                       :null-object nil
-                                       :false-object nil)))
-              (kill-buffer (current-buffer))))))
-    (error nil)))
+(defun zhihu-reader--fetch-question-detail (_question-id)
+  "Question detail is not fetched without the external signing library."
+  nil)
 
 (defun zhihu-reader--attach-question-detail (items question-id)
   "Attach question detail and images to ITEMS."
@@ -1791,8 +1763,10 @@ OFFSET selects the next page; SHOW expands the subtree."
 
 (defvar-local zhihu-reader-compose-kind nil)
 (defvar-local zhihu-reader-compose-id nil)
+(defvar-local zhihu-reader-compose-root-kind nil)
+(defvar-local zhihu-reader-compose-root-id nil)
 
-(defun zhihu-reader--open-compose-buffer (kind id label)
+(defun zhihu-reader--open-compose-buffer (kind id label &optional root-kind root-id)
   "Open a compose buffer for KIND/ID with LABEL."
   (let ((buffer (get-buffer-create "*Zhihu Comment*")))
     (with-current-buffer buffer
@@ -1800,6 +1774,8 @@ OFFSET selects the next page; SHOW expands the subtree."
       (text-mode)
       (setq-local zhihu-reader-compose-kind kind)
       (setq-local zhihu-reader-compose-id id)
+      (setq-local zhihu-reader-compose-root-kind (or root-kind kind))
+      (setq-local zhihu-reader-compose-root-id (or root-id id))
       (setq-local header-line-format
                   (format " 评论 %s  | C-c C-p 发布  C-c C-k 取消" label))
       (local-set-key (kbd "C-c C-p") #'zhihu-reader-publish-comment)
@@ -1814,14 +1790,21 @@ OFFSET selects the next page; SHOW expands the subtree."
         (article-id (org-entry-get nil "ZHIHU-ARTICLE" t)))
     (cond
      (comment-id
-      (zhihu-reader--open-compose-buffer
-       'reply comment-id (format "回复 %s" comment-id)))
+      (let ((root-kind (if article-id "article" "answer"))
+            (root-id (or answer-id article-id)))
+        (unless root-id
+          (user-error "缺少评论所属回答/文章 ID"))
+        (zhihu-reader--open-compose-buffer
+         'reply comment-id (format "回复 %s" comment-id)
+         root-kind root-id)))
      (answer-id
       (zhihu-reader--open-compose-buffer
-       'answer answer-id (format "回答 %s" answer-id)))
+       'answer answer-id (format "回答 %s" answer-id)
+       "answer" answer-id))
      (article-id
       (zhihu-reader--open-compose-buffer
-       'article article-id (format "文章 %s" article-id)))
+       'article article-id (format "文章 %s" article-id)
+       "article" article-id))
      (t
       (user-error "光标不在回答、文章或评论标题上")))))
 
@@ -1840,53 +1823,212 @@ OFFSET selects the next page; SHOW expands the subtree."
     (user-error "当前 buffer 不是评论编辑 buffer"))
   (let ((kind zhihu-reader-compose-kind)
         (id zhihu-reader-compose-id)
+        (root-kind zhihu-reader-compose-root-kind)
+        (root-id zhihu-reader-compose-root-id)
         (text (string-trim (buffer-string))))
     (when (string-empty-p text)
       (user-error "评论不能为空"))
     (unless (yes-or-no-p "确认发布这条评论？")
       (user-error "已取消"))
-    (zhihu-reader--ensure-zhihu)
-    (let* ((xsrf (zhihu--make-xsrf-state))
-           (token (zhihu--ensure-xsrf-token xsrf))
-           (payload
-            (pcase kind
-              ('reply
-               (list :content text
-                     :resource_type "comment"
-                     :resource_id id))
-              ('answer
-               (list :content text
-                     :resource_type "answer"
-                     :resource_id id))
-              ('article
-               (list :content text
-                     :resource_type "article"
-                     :resource_id id))
-              (_ (user-error "未知评论类型"))))
-           (resp (condition-case err
-                     (zhihu--http-json
-                      "POST" "https://www.zhihu.com/api/v4/comment_v5/comment"
-                      :body payload
-                      :xsrf-state xsrf
-                      :extra-headers `(("x-xsrftoken" . ,token)))
-                   (error err))))
-      (if (and (listp resp) (memq (plist-get resp :status) '(200 201 202)))
-          (progn
-            (message "评论已发布")
-            (kill-buffer))
-        (error "评论发布失败：%s" (or (plist-get resp :body) resp))))))
+    (zhihu-reader--publish-comment-native
+     root-kind root-id (if (eq kind 'reply) id nil) text)
+    (message "评论已发布")
+    (kill-buffer)))
 
+;;;; Standalone HTTP and Org export
+
+(defun zhihu-reader--org-to-html (text)
+  "Export Org TEXT to an HTML body using built-in ox-html."
+  (require 'ox-html)
+  (with-temp-buffer
+    (insert text)
+    (delay-mode-hooks (org-mode))
+    (org-export-as 'html nil nil t nil)))
+
+(defun zhihu-reader--http-json (method url &optional body)
+  "Send METHOD URL with BODY as JSON using the reader's cookies.
+Return a plist (:status :json :body).  No external HTTP package is used."
+  (let* ((cookies (zhihu-reader--cookie-alist))
+         (xsrf (cdr (assoc-string "_xsrf" cookies)))
+         (data (and body
+                    (encode-coding-string
+                     (json-serialize body
+                                     :null-object :json-null
+                                     :false-object :json-false)
+                     'utf-8)))
+         (url-request-method (intern (upcase method)))
+         (url-request-extra-headers
+          (append
+           `(("Cookie" . ,(zhihu-reader--cookies))
+             ("User-Agent" . ,zhihu-reader-user-agent)
+             ("Referer" . "https://www.zhihu.com/")
+             ("Origin" . "https://www.zhihu.com")
+             ("x-requested-with" . "fetch")
+             ("Accept" . "application/json, text/plain, */*")
+             ("Content-Type" . "application/json"))
+           (when (and xsrf (not (string-empty-p xsrf)))
+             `(("x-xsrftoken" . ,xsrf)))))
+         (url-request-data data))
+    (with-current-buffer (url-retrieve-synchronously url t t 30)
+      (unwind-protect
+          (progn
+            (goto-char (point-min))
+            (let ((status url-http-response-status))
+              (goto-char url-http-end-of-headers)
+              (decode-coding-region (point) (point-max) 'utf-8)
+              (let ((text (buffer-substring-no-properties (point) (point-max))))
+                (list :status status
+                      :json (condition-case nil
+                                (json-parse-string text
+                                                   :object-type 'alist
+                                                   :null-object nil
+                                                   :false-object nil)
+                              (error nil))
+                      :body text))))
+        (kill-buffer (current-buffer))))))
+
+(defun zhihu-reader--response-id (json)
+  "Extract a content id from a publish response JSON."
+  (let* ((data (zhihu-reader--alist-get 'data json))
+         (result (zhihu-reader--alist-get 'result data))
+         (publish (zhihu-reader--alist-get 'publish result)))
+    (or (zhihu-reader--alist-get 'id publish)
+        (zhihu-reader--alist-get 'id result)
+        (zhihu-reader--alist-get 'id data)
+        (zhihu-reader--alist-get 'id json))))
+
+(defun zhihu-reader--publish-answer (answer-id question-id html)
+  "Publish HTML as an answer to QUESTION-ID, updating ANSWER-ID if non-nil."
+  (let* ((draft (if answer-id
+                    (list :disabled 1 :isPublished t :contentId answer-id)
+                  (list :disabled 1 :isPublished :json-false)))
+         (body (list :action "answer"
+                     :data (list :draft draft
+                                 :question_id question-id
+                                 :content html
+                                 :comment_permission "all"
+                                 :reprint_permission "allowed")))
+         (resp (zhihu-reader--http-json
+                "POST" "https://www.zhihu.com/api/v4/content/publish" body))
+         (status (plist-get resp :status))
+         (json (plist-get resp :json)))
+    (unless (and (memq status '(200 201 202))
+                 (equal (zhihu-reader--alist-get 'code json) 0))
+      (error "回答发布失败 (HTTP %s): %s"
+             status (or (plist-get resp :body) json)))
+    (or (zhihu-reader--response-id json) answer-id)))
+
+(defun zhihu-reader--create-article-draft (title html)
+  "Create an article draft with TITLE and HTML, returning its id."
+  (let* ((body (list :title title :content html :delta_time 30 :can_reward :json-false))
+         (resp (zhihu-reader--http-json
+                "POST" "https://zhuanlan.zhihu.com/api/articles/drafts" body))
+         (id (zhihu-reader--response-id (plist-get resp :json))))
+    (unless id
+      (error "创建文章草稿失败 (HTTP %s): %s"
+             (plist-get resp :status) (plist-get resp :body)))
+    id))
+
+(defun zhihu-reader--patch-article-draft (article-id title html)
+  "Save TITLE and HTML to article draft ARTICLE-ID."
+  (let* ((url (format "https://zhuanlan.zhihu.com/api/articles/%s/draft" article-id))
+         (body (list :title title
+                     :content html
+                     :titleImage ""
+                     :isTitleImageFullScreen :json-false
+                     :delta_time 30
+                     :table_of_contents :json-false
+                     :can_reward :json-false))
+         (resp (zhihu-reader--http-json "PATCH" url body)))
+    (unless (memq (plist-get resp :status) '(200 201 202))
+      (error "保存文章草稿失败 (HTTP %s): %s"
+             (plist-get resp :status) (plist-get resp :body)))))
+
+(defun zhihu-reader--publish-article-native (file)
+  "Publish article source FILE using only this package's HTTP layer."
+  (let* ((meta (zhihu-reader--article-source-meta file))
+         (title (plist-get meta :title))
+         (html (zhihu-reader--org-to-html
+                (with-temp-buffer
+                  (insert-file-contents file)
+                  (buffer-string))))
+         (article-id (plist-get meta :article-id)))
+    (unless (and title (not (string-empty-p title)))
+      (user-error "文章缺少 #+TITLE"))
+    (unless (and article-id (not (string-empty-p article-id)))
+      (setq article-id (zhihu-reader--create-article-draft title html))
+      (zhihu-reader--write-article-id file article-id))
+    (zhihu-reader--patch-article-draft article-id title html)
+    (let* ((body (list :action "article"
+                       :data (list :draft (list :disabled 1
+                                                :isPublished t
+                                                :id article-id)
+                                   :title title
+                                   :content html
+                                   :comment_permission "all"
+                                   :reprint_permission "allowed")))
+           (resp (zhihu-reader--http-json
+                  "POST" "https://www.zhihu.com/api/v4/content/publish" body)))
+      (unless (memq (plist-get resp :status) '(200 201 202))
+        (error "文章发布失败 (HTTP %s): %s"
+               (plist-get resp :status) (plist-get resp :body))))
+    article-id))
+
+(defun zhihu-reader--publish-comment-native (root-kind root-id reply-id text)
+  "Publish comment TEXT on ROOT-KIND/ROOT-ID, optionally REPLY-ID."
+  (let* ((type (if (equal root-kind "article") "articles" "answers"))
+         (url (format "https://www.zhihu.com/api/v4/comment_v5/%s/%s/comment"
+                      type root-id))
+         (content (concat "<p>"
+                          (xml-escape-string (string-trim text))
+                          "</p>"))
+         (body (append (list :content content)
+                       (when (and reply-id (not (string-empty-p reply-id)))
+                         (list :reply_comment_id reply-id))))
+         (resp (zhihu-reader--http-json "POST" url body))
+         (json (plist-get resp :json)))
+    (unless (memq (plist-get resp :status) '(200 201 202))
+      (error "评论发布失败 (HTTP %s): %s"
+             (plist-get resp :status) (plist-get resp :body)))
+    json))
+
+(defun zhihu-reader--article-source-meta (file)
+  "Read article metadata from Org FILE."
+  (with-temp-buffer
+    (insert-file-contents file)
+    (goto-char (point-min))
+    (let (title article-id topics column-id banner)
+      (when (re-search-forward "^#\+TITLE:[ 	]*\(.*\)$" nil t)
+        (setq title (string-trim (match-string 1))))
+      (when (re-search-forward "^#\+ZHIHU_ARTICLE_ID:[ 	]*\(.*\)$" nil t)
+        (setq article-id (string-trim (match-string 1))))
+      (when (re-search-forward "^#\+ZHIHU_TOPICS:[ 	]*\(.*\)$" nil t)
+        (setq topics (condition-case nil
+                         (json-parse-string (match-string 1) :array-type 'list)
+                       (error nil))))
+      (when (re-search-forward "^#\+ZHIHU_COLUMN_ID:[ 	]*\(.*\)$" nil t)
+        (setq column-id (string-trim (match-string 1))))
+      (when (re-search-forward "^#\+BANNER:[ 	]*\(.*\)$" nil t)
+        (setq banner (string-trim (match-string 1))))
+      (list :title title :article-id article-id :topics topics
+            :column-id column-id :banner banner))))
+
+(defun zhihu-reader--write-article-id (file id)
+  "Write article ID into the Org source FILE."
+  (with-current-buffer (find-file-noselect file)
+    (goto-char (point-min))
+    (if (re-search-forward "^#\+ZHIHU_ARTICLE_ID:.*$" nil t)
+        (replace-match (concat "#+ZHIHU_ARTICLE_ID: " id))
+      (goto-char (point-min))
+      (insert (format "#+ZHIHU_ARTICLE_ID: %s
+" id)))
+    (save-buffer)))
 
 ;;;; Editing
 
 (defun zhihu-reader--ensure-zhihu ()
-  "Load zhihu.el and bind its cookie function to the reader's database."
-  (add-to-list 'load-path zhihu-reader-zhihu-library-path)
-  (require 'plz)
-  (require 'ox-zhihu)
-  (require 'zhihu)
-  (setq zhihu-cookie-function
-        (lambda (_url) (zhihu-reader--cookies))))
+  "Compatibility no-op; this package does not load external libraries."
+  nil)
 
 (defun zhihu-reader--subtree-body ()
   "Return the body of the current Org subtree, excluding child headings."
@@ -1926,8 +2068,8 @@ OFFSET selects the next page; SHOW expands the subtree."
 
 (defun zhihu-reader-publish-article ()
   "Publish the current Zhihu article Org source file.
-This uses the bundled zhihu.el machinery directly, not `zhihu-publish',
-and respects `zhihu-reader-enable-write'."
+This implementation is self-contained and respects
+`zhihu-reader-enable-write'."
   (interactive)
   (unless zhihu-reader-enable-write
     (user-error "写操作已关闭；请设置 `zhihu-reader-enable-write' 为 t"))
@@ -1937,17 +2079,14 @@ and respects `zhihu-reader-enable-write'."
     (user-error "当前 buffer 不是 Org 文件"))
   (when (buffer-modified-p)
     (save-buffer))
-  (zhihu-reader--ensure-zhihu)
   (let* ((file buffer-file-name)
-         (meta (zhihu--read-source-meta file)))
-    (unless (eq (plist-get meta :kind) 'article)
-      (user-error "当前源稿不是知乎文章"))
+         (meta (zhihu-reader--article-source-meta file)))
+    (unless (plist-get meta :title)
+      (user-error "文章缺少 #+TITLE"))
     (unless (yes-or-no-p
-             (format "确认发布文章「%s」？"
-                     (or (plist-get meta :title) "")))
+             (format "确认发布文章「%s」？" (plist-get meta :title)))
       (user-error "已取消发布"))
-    (let ((id (zhihu--publish-article-file
-               (zhihu--make-xsrf-state) file meta)))
+    (let ((id (zhihu-reader--publish-article-native file)))
       (revert-buffer t t t)
       (message "文章已发布：%s" id)
       id)))
@@ -1977,11 +2116,6 @@ and respects `zhihu-reader-enable-write'."
       (insert (format "#+ZHIHU_COLUMN_ID: %s\n" column)))
     (insert "#+TOC: headlines 2\n\n* 正文\n\n")
     (save-buffer)
-    (condition-case nil
-        (progn
-          (require 'zhihu)
-          (when (fboundp 'zhihu-mode) (zhihu-mode 1)))
-      (error nil))
     (local-set-key (kbd "C-c C-p") #'zhihu-reader-publish-article)
     (message "文章源稿已创建: %s\n发布: C-c C-p 或 M-x zhihu-reader-publish-article" file)))
 
@@ -2062,8 +2196,7 @@ and respects `zhihu-reader-enable-write'."
 (defun zhihu-reader-edit-preview ()
   "Render the current edit buffer as HTML in Eww."
   (interactive)
-  (zhihu-reader--ensure-zhihu)
-  (let ((html (zhihu--org->html (buffer-string)))
+  (let ((html (zhihu-reader--org-to-html (buffer-string)))
         (file (make-temp-file "zhihu-preview-" nil ".html")))
     (with-temp-file file (insert html))
     (require 'eww)
@@ -2077,7 +2210,6 @@ This is destructive and requires `zhihu-reader-enable-write'."
     (user-error "写操作已关闭；请设置 `zhihu-reader-enable-write' 为 t"))
   (unless (derived-mode-p 'zhihu-reader-edit-mode)
     (user-error "当前 buffer 不是知乎编辑 buffer"))
-  (zhihu-reader--ensure-zhihu)
   (let ((kind zhihu-reader-edit-kind)
         (id zhihu-reader-edit-id)
         (qid zhihu-reader-edit-question-id)
@@ -2088,17 +2220,17 @@ This is destructive and requires `zhihu-reader-enable-write'."
       (user-error "已取消发布"))
     (pcase kind
       ("answer"
-       (let* ((html (zhihu--org->html text))
-              (new-id (zhihu--publish-answer id qid html)))
+       (let* ((html (zhihu-reader--org-to-html text))
+              (new-id (zhihu-reader--publish-answer id qid html)))
          (unless id
            (setq-local zhihu-reader-edit-id new-id))
          (message (if id "回答已更新" "新回答已发布"))))
       ("comment"
        (let* ((url (format "https://www.zhihu.com/api/v4/comment_v5/comment/%s" id))
-              (resp (zhihu--http-json "PATCH" url
-                                      :body (list :content text)))
+              (resp (zhihu-reader--http-json "PATCH" url
+                                             (list :content (concat "<p>" (xml-escape-string text) "</p>"))))
               (status (plist-get resp :status)))
-         (unless (equal status 200)
+         (unless (memq status '(200 201 202))
            (error "评论更新失败（HTTP %s）：%s"
                   status (plist-get resp :body)))
          (message "评论已更新")))

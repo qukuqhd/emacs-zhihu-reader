@@ -6,7 +6,6 @@ A read-only Zhihu reader for Emacs, modeled after:
 - `zimya/zhihu_obsidian`: Web Viewer login + v3 feed API + Markdown
 - `crispyChicken999/zhihu-fisher-vscode`: hot list, search, question/answer
   detail, comments and nested reading
-- `DzmingLi/zhihu.el`: Emacs cookie abstraction and ZSE signing (future APIs)
 
 ## Architecture
 
@@ -53,8 +52,8 @@ Recommendation and search results are grouped by question:
 - In the edit buffer: `C-c C-c` preview, `C-c C-p` publish, `C-c C-k` cancel.
 
 > Writing is disabled by default.  Set `zhihu-reader-enable-write` to t and
-> confirm the publish prompt.  Answer editing uses `zhihu.el`'s signed
-> `content/publish` path; comment editing uses a beta `comment_v5` PATCH.
+> confirm the publish prompt.  Publishing uses this package's own HTTP and
+> built-in Org HTML exporter; no external Zhihu package is required.
 
 - Inline images are enabled by default and load lazily when a subtree is
   expanded; a spinner appears in the mode line while downloads are active.  They are downloaded asynchronously to
