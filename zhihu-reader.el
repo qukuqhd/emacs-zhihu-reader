@@ -1342,10 +1342,13 @@ the target buffer."
       (format "https://www.zhihu.com/api/v4/comment_v5/%s/%s/root_comment?order_by=%s"
               type id (if (equal zhihu-reader-comment-order "time") "ts" "score")))))
 
-(defun zhihu-reader--child-comments-url (comment-id &optional offset)
-  "Return the child comments API URL for COMMENT-ID and OFFSET."
-  (format "https://www.zhihu.com/api/v4/comment_v5/comment/%s/child_comment?order=normal&limit=20&offset=%d&status=open"
-          comment-id (or offset 0)))
+(defun zhihu-reader--child-comments-url (comment-id &optional cursor)
+  "Return child comments URL for COMMENT-ID and optional CURSOR."
+  (if (and cursor (stringp cursor)
+           (string-prefix-p "https://www.zhihu.com/api/v4/comment_v5/" cursor))
+      cursor
+    (format "https://www.zhihu.com/api/v4/comment_v5/comment/%s/child_comment?limit=20&order=normal&status=open"
+            comment-id)))
 
 (defun zhihu-reader--cookie-alist ()
   "Return the current Zhihu cookie header as a name/value alist."
@@ -1542,12 +1545,14 @@ With FORCE non-nil, bypass the page cache."
     (with-current-buffer (marker-buffer marker)
       (let* ((paging (zhihu-reader--alist-get 'paging json))
              (next (zhihu-reader--alist-get 'next paging))
-             (previous (zhihu-reader--alist-get 'previous paging)))
+             (previous (zhihu-reader--alist-get 'previous paging))
+             (is-end (zhihu-reader--alist-get 'is_end paging)))
         (save-excursion
           (goto-char marker)
           (org-entry-put nil "ZHIHU-COMMENTS-NEXT" (or next ""))
           (org-entry-put nil "ZHIHU-COMMENTS-PREV" (or previous ""))
-          (org-entry-put nil "ZHIHU-COMMENTS-HAS-NEXT" (if next "1" "0"))
+          (org-entry-put nil "ZHIHU-COMMENTS-HAS-NEXT"
+                         (if (and next (not (eq is-end t))) "1" "0"))
           (org-entry-put nil "ZHIHU-COMMENTS-HAS-PREV" (if previous "1" "0")))))))
 
 (defun zhihu-reader--load-comments-at (id marker kind &optional cursor)
@@ -1623,18 +1628,33 @@ When SHOW is non-nil, expand the comments subtree."
        (zhihu-reader--set-comment-status marker "failed")
        (message "评论加载失败: %s" error)))))
 
-(defun zhihu-reader--load-child-comments-async (comment-id marker &optional offset show)
+(defun zhihu-reader--set-child-paging (marker json)
+  "Store child comment cursors at MARKER."
+  (when (and (markerp marker) (buffer-live-p (marker-buffer marker)))
+    (with-current-buffer (marker-buffer marker)
+      (let* ((paging (zhihu-reader--alist-get 'paging json))
+             (next (zhihu-reader--alist-get 'next paging))
+             (previous (zhihu-reader--alist-get 'previous paging))
+             (is-end (zhihu-reader--alist-get 'is_end paging)))
+        (save-excursion
+          (goto-char marker)
+          (org-entry-put nil "ZHIHU-CHILDREN-NEXT" (or next ""))
+          (org-entry-put nil "ZHIHU-CHILDREN-PREV" (or previous ""))
+          (org-entry-put nil "ZHIHU-CHILDREN-HAS-NEXT"
+                         (if (and next (not (eq is-end t))) "1" "0"))
+          (org-entry-put nil "ZHIHU-CHILDREN-HAS-PREV" (if previous "1" "0")))))))
+
+(defun zhihu-reader--load-child-comments-async (comment-id marker &optional cursor show)
   "Load child comments for COMMENT-ID asynchronously at MARKER.
-OFFSET selects the next page; SHOW expands the subtree."
-  (let ((offset (or offset 0))
-        (buffer (current-buffer))
+CURSOR selects the next page; SHOW expands the subtree."
+  (let ((buffer (current-buffer))
         (generation zhihu-reader--generation)
         (level (save-excursion
                  (goto-char marker)
                  (org-back-to-heading t)
                  (1+ (org-current-level)))))
     (zhihu-reader--fetch-json-async
-     (zhihu-reader--child-comments-url comment-id offset)
+     (zhihu-reader--child-comments-url comment-id cursor)
      (lambda (json)
        (when (zhihu-reader--generation-current-p buffer generation)
          (with-current-buffer buffer
@@ -1650,7 +1670,7 @@ OFFSET selects the next page; SHOW expands the subtree."
              (save-excursion
                (goto-char marker)
                (org-entry-put nil "ZHIHU-CHILDREN-LOADED" "t")
-               (org-entry-put nil "ZHIHU-CHILDREN-OFFSET" (number-to-string (+ offset 20)))
+               (zhihu-reader--set-child-paging marker json)
                (if show
                    (zhihu-reader--show-comment-subtree marker)
                  (ignore-errors (org-fold-hide-subtree)))
@@ -1733,11 +1753,12 @@ OFFSET selects the next page; SHOW expands the subtree."
             (user-error "已经是最后一页评论"))
           (message "加载下一页评论…")
           (zhihu-reader--load-comments-async id marker kind next t))
-      (let ((offset (string-to-number
-                     (or (org-entry-get nil "ZHIHU-CHILDREN-OFFSET") "0"))))
+      (let ((next (org-entry-get nil "ZHIHU-CHILDREN-NEXT")))
+        (when (or (null next) (string-empty-p next))
+          (user-error "已经是最后一页子评论"))
         (message "加载下一页子评论…")
         (zhihu-reader--load-child-comments-async
-         comment-id marker (+ offset 20) t)))))
+         comment-id marker next t)))))
 
 (defun zhihu-reader-comments-previous ()
   "Load the previous page of comments at point."
@@ -1790,9 +1811,9 @@ OFFSET selects the next page; SHOW expands the subtree."
           (zhihu-reader--load-comments-async id marker kind nil t)))
        (t
         (if noninteractive
-            (let ((comments (zhihu-reader--normalize-comments
-                             (zhihu-reader--fetch-json
-                              (zhihu-reader--child-comments-url comment-id)))))
+            (let* ((json (zhihu-reader--fetch-json
+                          (zhihu-reader--child-comments-url comment-id)))
+                   (comments (zhihu-reader--normalize-comments json)))
               (goto-char marker)
               (org-back-to-heading t)
               (let ((inhibit-read-only t)
@@ -1801,12 +1822,12 @@ OFFSET selects the next page; SHOW expands the subtree."
                 (insert "\n")
                 (zhihu-reader--insert-comments comments level)
                 (org-entry-put nil "ZHIHU-CHILDREN-LOADED" "t")
-                (org-entry-put nil "ZHIHU-CHILDREN-OFFSET" "20")
+                (zhihu-reader--set-child-paging marker json)
                 (zhihu-reader--show-comment-subtree marker)
                 (zhihu-reader--hide-drawers)
                 (setq buffer-read-only t)))
           (message "子评论加载中…")
-          (zhihu-reader--load-child-comments-async comment-id marker 0 t)))))))
+          (zhihu-reader--load-child-comments-async comment-id marker nil t)))))))
 
 (defvar-local zhihu-reader-compose-kind nil)
 (defvar-local zhihu-reader-compose-id nil)
@@ -2218,16 +2239,19 @@ Return a plist (:status :json :body)."
   (interactive)
   (unless zhihu-reader-enable-write
     (user-error "写操作已关闭；请设置 `zhihu-reader-enable-write' 为 t"))
-  (let ((id (org-entry-get nil "ZHIHU-ANSWER" t)))
+  (let* ((id (org-entry-get nil "ZHIHU-ANSWER" t))
+         (thanked (equal (org-entry-get nil "ZHIHU-THANKED") "t")))
     (unless id (user-error "光标不在回答标题上"))
-    (unless (yes-or-no-p "确认感谢这个回答？")
+    (unless (yes-or-no-p (if thanked "取消感谢这个回答？" "感谢这个回答？"))
       (user-error "已取消"))
     (zhihu-reader--action-check
      (zhihu-reader--http-json
-      "POST" (format "https://www.zhihu.com/api/v4/answers/%s/thank" id)
-      (list :thanks t) nil)
-     "感谢")
-    (message "已感谢")))
+      (if thanked "DELETE" "POST")
+      (format "https://www.zhihu.com/api/v4/answers/%s/thankers" id)
+      nil nil)
+     (if thanked "取消感谢" "感谢"))
+    (org-entry-put nil "ZHIHU-THANKED" (if thanked "nil" "t"))
+    (message (if thanked "已取消感谢" "已感谢"))))
 
 (defun zhihu-reader-favorite ()
   "Add the answer or article at point to a collection."
@@ -2235,6 +2259,7 @@ Return a plist (:status :json :body)."
   (unless zhihu-reader-enable-write
     (user-error "写操作已关闭；请设置 `zhihu-reader-enable-write' 为 t"))
   (pcase-let* ((`(,type ,id) (zhihu-reader--content-target))
+               (type (if (equal type "answers") "answer" "article"))
                (collection (read-string "收藏夹 ID: ")))
     (when (string-empty-p collection)
       (user-error "收藏夹 ID 为空"))

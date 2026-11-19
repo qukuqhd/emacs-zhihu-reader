@@ -45,6 +45,7 @@ Recommendation and search results are grouped by question:
 - Answer and comment headings show relative time (`3小时前`, `6天前`).
 - Comments are inserted as `**** author · votes · relative-time` children.
 - Pressing `c` on a comment heading loads its child replies as `*****` entries.
+  Child replies also use `paging.next` cursor pagination.
 - Root comments use the `comment_v5` API with cursor-based `paging.next` /
   `paging.previous` pagination, so pages no longer depend on numeric offsets.
 - `C-c o` changes root comment order (`score` / `time`);
@@ -67,7 +68,7 @@ Recommendation and search results are grouped by question:
   server-provided cursor.
 - `C-c v` upvotes (`C-u` downvotes) the answer/article at point.
 - `C-c f` follows/unfollows the author, question or topic at point.
-- `C-c t` thanks an answer.
+- `C-c t` thanks or un-thanks an answer.
 - `C-c F` adds an answer/article to a collection by collection ID.
 - `C-c b` bookmarks the current answer/article; `C-c B` opens the bookmark
   list.  `C-c m` / `C-c u` mark read/unread.
