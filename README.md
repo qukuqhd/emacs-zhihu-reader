@@ -83,6 +83,7 @@ M-x zhihu-reader-question  ; question + answer list
 M-x zhihu-reader-answer    ; answer + comments
 M-x zhihu-reader-read-url  ; EAF + Readability fallback
 M-x zhihu-reader-edit-at-point ; edit answer/comment in an Org buffer
+M-x zhihu-reader-new-article ; create an article Org source file
 M-x zhihu-reader-compose-comment ; write a new comment/reply
 (setq zhihu-reader-enable-write t) ; required before publishing
 M-x zhihu-reader-set-cookie

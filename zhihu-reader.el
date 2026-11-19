@@ -100,6 +100,12 @@ Written by `zhihu-reader-set-cookie' with mode 0600."
 (defvar zhihu-reader--seen (make-hash-table :test #'equal))
 (defvar zhihu-reader--seen-loaded nil)
 
+(defcustom zhihu-reader-article-directory
+  (expand-file-name "~/org/zhihu/articles/")
+  "Directory used by `zhihu-reader-new-article'."
+  :type 'directory
+  :group 'zhihu-reader)
+
 (defcustom zhihu-reader-hot-url
   "https://www.zhihu.com/api/v3/feed/topstory/hot-lists/total?limit=50&desktop=true"
   "Zhihu hot-list endpoint."
@@ -1918,6 +1924,38 @@ OFFSET selects the next page; SHOW expands the subtree."
       (goto-char (point-min)))
     (pop-to-buffer buffer)))
 
+(defun zhihu-reader-new-article (title)
+  "Create a new Zhihu article Org source file."
+  (interactive "s文章标题: ")
+  (unless (and (stringp title) (not (string-empty-p (string-trim title))))
+    (user-error "标题不能为空"))
+  (let* ((dir (expand-file-name zhihu-reader-article-directory))
+         (slug (replace-regexp-in-string
+                "[^[:alnum:]]+" "-"
+                (string-trim title)))
+         (file (expand-file-name
+                (format "%s-%s.org"
+                        (format-time-string "%Y%m%d-%H%M%S")
+                        slug)
+                dir))
+         (topics (read-string "话题 JSON 数组（可空）: " "[]"))
+         (column (read-string "专栏 ID（可空）: " "")))
+    (make-directory dir t)
+    (find-file file)
+    (insert (format "#+TITLE: %s\n" (string-trim title)))
+    (insert "#+ZHIHU_ARTICLE_ID:\n")
+    (insert (format "#+ZHIHU_TOPICS: %s\n" (if (string-empty-p topics) "[]" topics)))
+    (when (not (string-empty-p column))
+      (insert (format "#+ZHIHU_COLUMN_ID: %s\n" column)))
+    (insert "#+TOC: headlines 2\n\n* 正文\n\n")
+    (save-buffer)
+    (condition-case nil
+        (progn
+          (require 'zhihu)
+          (when (fboundp 'zhihu-mode) (zhihu-mode 1)))
+      (error nil))
+    (message "文章源稿已创建: %s\n发布: M-x zhihu-publish" file)))
+
 (defun zhihu-reader-new-answer (question-id)
   "Start a new answer draft for QUESTION-ID."
   (interactive "s知乎问题 ID 或 URL: ")
@@ -2492,6 +2530,7 @@ q       quit\n\
     (define-key map (kbd "C-c c") #'zhihu-reader-compose-comment)
     (define-key map (kbd "C-c a") #'zhihu-reader-author)
     (define-key map (kbd "C-c n") #'zhihu-reader-new-answer)
+    (define-key map (kbd "C-c N") #'zhihu-reader-new-article)
     (define-key map (kbd "C-c s") #'zhihu-reader-save-draft)
     (define-key map (kbd "e") #'zhihu-reader-edit-at-point)
     (define-key map (kbd "o") #'zhihu-reader-read-url-from-point)
