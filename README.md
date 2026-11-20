@@ -157,7 +157,7 @@ Recommendation and search results are grouped by question:
   article title is prepended; set `zhihu-reader-copy-link-include-title`
   to nil for link-only copying.
 - Question descriptions are fetched with a native ZSE v4 signature.
-- Recommendation items are deduplicated by question/article ID.  Seen IDs
+- Recommendation items are deduplicated by answer/article ID; different answers under the same question are not filtered together.  Seen IDs
   persist in `~/.local/state/zhihu-reader/seen.eld`; clear them with
   `M-x zhihu-reader-clear-seen` or disable filtering with
   `(setq zhihu-reader-filter-seen nil)`.

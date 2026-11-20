@@ -317,8 +317,8 @@ BUFFER-NAME overrides the target buffer for search/article views."
         (qid (plist-get item :question-id))
         (id (plist-get item :id)))
     (cond
-     ((and (equal kind "answer") qid (not (string-empty-p qid)))
-      (concat "question:" qid))
+     ((and (equal kind "answer") id (not (string-empty-p id)))
+      (concat "answer:" id))
      ((not (string-empty-p (or id "")))
       (concat (or kind "item") ":" id))
      (t nil))))
