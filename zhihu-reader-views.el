@@ -1043,6 +1043,46 @@ With FORCE non-nil, bypass the page cache."
     (when time (insert "  " time "\n"))
     (insert "\n")))
 
+(defun zhihu-reader-refresh-unread (&optional silent)
+  "Refresh the unread notification count in the background."
+  (interactive)
+  (when (ignore-errors (zhihu-reader--cookies))
+    (zhihu-reader--fetch-json-async
+     "https://api.zhihu.com/notifications/v3/message/v3"
+     (lambda (json)
+       (let* ((unread (zhihu-reader--alist-get 'unread json))
+              (count (or (zhihu-reader--alist-get
+                          'count (zhihu-reader--alist-get 'message unread))
+                         0)))
+         (setq zhihu-reader--unread-total (or count 0))
+         (force-mode-line-update t)
+         (unless silent
+           (message "未读通知: %s" zhihu-reader--unread-total))))
+     (lambda (error) (unless silent (message "未读数刷新失败: %s" error))))))
+
+(defun zhihu-reader-start-unread-poll (&optional interval)
+  "Start periodic unread-count polling."
+  (interactive)
+  (when (timerp zhihu-reader--unread-poll-timer)
+    (cancel-timer zhihu-reader--unread-poll-timer))
+  (setq zhihu-reader-unread-poll-interval
+        (or interval zhihu-reader-unread-poll-interval))
+  (when (and (numberp zhihu-reader-unread-poll-interval)
+             (> zhihu-reader-unread-poll-interval 0))
+    (setq zhihu-reader--unread-poll-timer
+          (run-with-timer 0 zhihu-reader-unread-poll-interval
+                          #'zhihu-reader-refresh-unread t))
+    (message "未读通知轮询已开启（%s 秒）"
+             zhihu-reader-unread-poll-interval)))
+
+(defun zhihu-reader-stop-unread-poll ()
+  "Stop unread-count polling."
+  (interactive)
+  (when (timerp zhihu-reader--unread-poll-timer)
+    (cancel-timer zhihu-reader--unread-poll-timer)
+    (setq zhihu-reader--unread-poll-timer nil))
+  (message "未读通知轮询已停止"))
+
 (defun zhihu-reader-notification-timeline (category &optional cursor)
   "Open notifications for CATEGORY, optionally at CURSOR."
   (interactive
@@ -1486,6 +1526,11 @@ With FORCE non-nil, bypass the page cache."
                      ("year" . "a_year")))
          (time (cdr (assoc zhihu-reader-search-time-range time-map)))
          (url (if time (concat url "&time_interval=" (url-hexify-string time)) url))
+         (filtered (or (not (equal zhihu-reader-search-content-type "all"))
+                       (not (equal zhihu-reader-search-time-range "all"))
+                       (and zhihu-reader-search-sort
+                            (not (string-empty-p zhihu-reader-search-sort)))))
+         (url (if filtered (concat url "&search_source=Filter") url))
          (url (if (and zhihu-reader-search-sort
                        (not (string-empty-p zhihu-reader-search-sort)))
                   (concat url "&sort=" (url-hexify-string zhihu-reader-search-sort))

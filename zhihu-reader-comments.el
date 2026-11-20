@@ -101,9 +101,58 @@ not provide one (for example, a question with zero answers)."
               (setcar items (plist-put (car items) :question-images images)))
             items))))))
 
+(defun zhihu-reader--update-question-detail-in-buffer (buffer id title org images)
+  "Update the question detail subtree in BUFFER without re-rendering."
+  (with-current-buffer buffer
+    (save-excursion
+      (goto-char (point-min))
+      (when (re-search-forward "^\\* " nil t)
+        (org-back-to-heading t)
+        (let* ((qstart (point))
+               (qend (save-excursion (org-end-of-subtree t t) (point)))
+               (detail-pos (save-excursion
+                             (goto-char qstart)
+                             (when (re-search-forward "^\\*\\* 问题详情" qend t)
+                               (match-beginning 0)))))
+          (let ((inhibit-read-only t))
+            (if detail-pos
+                (save-excursion
+                  (goto-char detail-pos)
+                  (org-back-to-heading t)
+                  (forward-line 1)
+                  (when (looking-at ":PROPERTIES:")
+                    (re-search-forward "^:END:" nil t)
+                    (forward-line 1))
+                  (let ((start (point))
+                        (end (save-excursion
+                               (if (re-search-forward "^\\*+ " nil t)
+                                   (match-beginning 0)
+                                 (point-max)))))
+                    (delete-region start end)
+                    (when (and org (not (string-empty-p org)))
+                      (zhihu-reader--body org))
+                    (when images
+                      (zhihu-reader--insert-images images))))
+              (save-excursion
+                (goto-char qstart)
+                (forward-line 1)
+                (when (looking-at ":PROPERTIES:")
+                  (re-search-forward "^:END:" nil t)
+                  (forward-line 1))
+                (zhihu-reader--heading
+                 2 "问题详情"
+                 (append (when (and id (not (string-empty-p id)))
+                           (list (cons "ZHIHU-QUESTION" id)))
+                         (list (cons "ZHIHU-QUESTION-DETAIL" "t"))))
+                (when (and org (not (string-empty-p org)))
+                  (zhihu-reader--body org))
+                (when images
+                  (zhihu-reader--insert-images images))
+                (insert "\n")))
+            (ignore-errors (zhihu-reader--hide-drawers))))))))
+
 (defun zhihu-reader--question-detail-async (id items view buffer)
-  "Fetch question detail for ID asynchronously and refresh BUFFER.
-ITEMS is the current answer list; VIEW is the question view."
+  "Fetch question detail for ID asynchronously and update BUFFER in place."
   (let ((url (format "https://www.zhihu.com/api/v4/questions/%s?include=detail" id)))
     (zhihu-reader--fetch-json-async
      url
@@ -113,35 +162,21 @@ ITEMS is the current answer list; VIEW is the question view."
               (org (zhihu-reader--html-to-org html))
               (images (zhihu-reader--extract-images html)))
          (when (or (not (string-empty-p org)) title)
-           (let* ((items
-                   (if (null items)
-                       (list (list :kind "question" :id id :question-id id
-                                   :title (or title (format "问题 %s" id))
-                                   :content org :images images
-                                   :question-detail org :question-images images))
-                     (let ((first (car items)))
-                       (setcar items
-                               (plist-put
-                                (plist-put first :question-title
-                                           (or title (plist-get first :question-title)))
-                                :question-detail
-                                (if (string-empty-p org)
-                                    (plist-get first :question-detail)
-                                  org)))
-                       (when images
-                         (setcar items (plist-put (car items) :question-images images)))
-                       items)))
-                  (display-title (or (plist-get (car items) :question-title)
-                                     (format "问题 %s" id))))
-             (with-current-buffer buffer
-               (let ((origin (copy-marker (point))))
-                 (zhihu-reader--render
-                  (format "问题 · %s" display-title) items view buffer
-                  (eq (window-buffer (selected-window)) buffer))
-                 (goto-char origin)))))))
+           (if (null items)
+               ;; No answers: keep a question heading and insert detail.
+               (with-current-buffer buffer
+                 (save-excursion
+                   (goto-char (point-min))
+                   (when (re-search-forward "^\\* " nil t)
+                     (org-back-to-heading t)
+                     (let ((inhibit-read-only t))
+                       (when (and title (not (equal (org-get-heading t t t t) title)))
+                         (org-edit-headline title))))))
+             nil)
+           (zhihu-reader--update-question-detail-in-buffer
+            buffer id title org images))))
      (lambda (_error) nil)
      t)))
-
 (defun zhihu-reader--id-or-url (value)
   "Extract a numeric Zhihu id from VALUE, which may be an id or URL."
   (cond
@@ -186,7 +221,12 @@ With FORCE non-nil, bypass the page cache."
          title key url zhihu-reader--question-buffer
          (lambda (json)
            (let* ((items (zhihu-reader--normalize-items json))
+                  (items (or items
+                             (list (list :kind "question" :id id
+                                         :question-id id
+                                         :title (format "问题 %s" id)))))
                   (qtitle (or (plist-get (car items) :question-title)
+                              (plist-get (car items) :title)
                               (format "问题 %s" id))))
              (cons (format "问题 · %s · 第 %d 页 · %s" qtitle page order)
                    items)))
@@ -244,7 +284,7 @@ With FORCE non-nil, bypass the page cache."
                       (images (zhihu-reader--extract-images html))
                       (child-count (or (zhihu-reader--alist-get 'child_comment_count comment)
                                        (length (alist-get 'child_comments comment)))))
-                 (when (not (string-empty-p content))
+                 (when (or (not (string-empty-p content)) images)
                    (list :id (zhihu-reader--string
                               (zhihu-reader--alist-get 'id comment))
                          :author (zhihu-reader--first

@@ -128,6 +128,13 @@ Written by `zhihu-reader-set-cookie' with mode 0600."
   :type 'boolean
   :group 'zhihu-reader)
 
+(defcustom zhihu-reader-unread-poll-interval 300
+  "Seconds between unread-notification polls; nil disables polling."
+  :type '(choice (const :tag "Disabled" nil) integer)
+  :group 'zhihu-reader)
+
+(defvar zhihu-reader--unread-poll-timer nil)
+
 (defvar zhihu-reader--unread-total 0
   "Last known total of unread Zhihu notifications/messages.")
 

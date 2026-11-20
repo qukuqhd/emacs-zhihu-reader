@@ -915,7 +915,9 @@ questions when a subtree is shown, even if global fold state leaked."
   (add-hook 'org-cycle-hook #'zhihu-reader--after-cycle nil t)
   (setq-local mode-line-misc-info
               (cons '(:eval (zhihu-reader--mode-line-unread))
-                    mode-line-misc-info)))
+                    mode-line-misc-info))
+  (when (fboundp 'zhihu-reader-start-unread-poll)
+    (zhihu-reader-start-unread-poll)))
 
 (provide 'zhihu-reader-ui)
 ;;; zhihu-reader-ui.el ends here
