@@ -758,7 +758,7 @@ questions when a subtree is shown, even if global fold state leaked."
     (save-excursion
       (goto-char (point-min))
       (while (re-search-forward "^\\* " nil t)
-        (let* ((heading (point))
+        (let* ((heading (match-beginning 0))
                (end (save-excursion
                       (goto-char heading)
                       (org-end-of-subtree t t)
@@ -766,7 +766,10 @@ questions when a subtree is shown, even if global fold state leaked."
           (unless (and (<= heading current) (<= current end))
             (ignore-errors
               (goto-char heading)
-              (org-fold-hide-subtree))))))))
+              (org-fold-hide-subtree)
+              ;; Continue after this subtree; hiding can leave point at
+              ;; the heading and otherwise loop forever.
+              (goto-char end))))))))
 
 (defun zhihu-reader--after-cycle (state &rest _)
   "Load comments and images after a visibility STATE change."
