@@ -396,6 +396,27 @@ Return a plist (:status :json :body)."
               (cons status (buffer-substring-no-properties (point) (point-max)))))
         (kill-buffer (current-buffer))))))
 
+(defun zhihu-reader--curl-put (url file headers)
+  "PUT FILE to URL with curl and HEADERS.
+Return (HTTP-STATUS . BODY).  Using curl avoids Emacs' multibyte HTTP
+request limitation for binary image bodies."
+  (with-temp-buffer
+    (let* ((args (append
+                  (list "-sS" "-X" "PUT" "--data-binary" (concat "@" file)
+                        "-w" "\n%{http_code}\n")
+                  (mapcan (lambda (h)
+                            (list "-H" (format "%s: %s" (car h) (cdr h))))
+                          headers)
+                  (list url)))
+           (status (apply #'call-process "curl" nil t nil args))
+           (text (buffer-string))
+           (code (and (string-match "\n\\([0-9]+\\)\n\\'" text)
+                      (string-to-number (match-string 1 text))))
+           (body (if (string-match "\n[0-9]+\\'\\'" text)
+                     (substring text 0 (match-beginning 0))
+                   text)))
+      (cons (or code (if (zerop status) 0 500)) body))))
+
 (defun zhihu-reader--hmac-sha1-base64 (key data)
   "Return HMAC-SHA1(KEY, DATA) as base64, using openssl."
   (let ((file (make-temp-file "zhihu-hmac-" nil ".bin")))
@@ -465,16 +486,16 @@ SOURCE defaults to \"article\".  This is a write operation."
                                          resource)
                                    "\n"))
                (signature (zhihu-reader--hmac-sha1-base64 access-key source))
-               (put-resp (zhihu-reader--http-binary
-                          "PUT" (format "https://zhihu-pics-upload.zhimg.com/v2-%s" hash)
-                          bytes
+               (put-resp (zhihu-reader--curl-put
+                          (format "https://zhihu-pics-upload.zhimg.com/v2-%s" hash)
+                          file
                           `(("Content-Type" . ,media)
                             ("x-oss-date" . ,date)
                             ("x-oss-user-agent" . "aliyun-sdk-js/6.8.0 Chrome 99.0.4844.84 on Windows 10 64-bit")
                             ("x-oss-security-token" . ,access-token)
                             ("Authorization" . ,(format "OSS %s:%s" access-id signature))))))
           (unless (and (>= (car put-resp) 200) (< (car put-resp) 300))
-            (error "图片 OSS 上传失败 (HTTP %s): %s" (car put-resp) (cdr put-resp))))
+            (error "图片 OSS 上传失败 (HTTP %s): %s" (car put-resp) (substring (cdr put-resp) 0 (min 300 (length (cdr put-resp))))))
         (let* ((status-resp (zhihu-reader--http-json
                              "PUT"
                              (format "https://api.zhihu.com/images/%s/uploading_status" image-id)
@@ -491,7 +512,7 @@ SOURCE defaults to \"article\".  This is a write operation."
                             (zhihu-reader--alist-get 'original_src j)
                             (zhihu-reader--alist-get 'watermark_src j)))
               (unless url (sleep-for 2)))))
-        (or url (error "图片处理超时: %s" image-id))))))
+        (or url (error "图片处理超时: %s" image-id)))))))
 
 (defun zhihu-reader--response-id (json)
   "Extract a content id from a publish response JSON."
