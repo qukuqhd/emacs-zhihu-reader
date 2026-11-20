@@ -351,7 +351,6 @@ KIND is \"answer\" or \"article\"; CURSOR is an optional paging URL."
 KIND is \"answer\" or \"article\"; CURSOR is an optional paging URL.
 When SHOW is non-nil, expand the comments subtree."
   (let ((buffer (current-buffer))
-        (origin (copy-marker (point)))
         (generation zhihu-reader--generation)
         (level (save-excursion
                  (goto-char marker)
@@ -365,27 +364,27 @@ When SHOW is non-nil, expand the comments subtree."
            (when (zhihu-reader--generation-current-p buffer generation)
              (with-current-buffer buffer
                (let ((inhibit-read-only t))
-                 (goto-char marker)
-                 (org-back-to-heading t)
-                 (org-end-of-subtree)
-                 (insert "\n")
-                 (let ((comments (zhihu-reader--normalize-comments json)))
-                   (unless comments
-                     (message "知乎返回 0 条评论（可能已删除或折叠）"))
-                   (zhihu-reader--clear-comment-body marker)
-                   (zhihu-reader--insert-comments comments level)
-                   (zhihu-reader--set-comment-paging marker json)
-                   (zhihu-reader--set-comment-status
-                    marker (if comments "loaded" "empty") (length comments)))
                  (save-excursion
                    (goto-char marker)
-                   (org-entry-put nil "ZHIHU-COMMENTS-LOADED" "t"))
-                 (if show
-                     (zhihu-reader--show-comment-subtree marker)
-                   (ignore-errors (org-fold-hide-subtree)))
-                 (zhihu-reader--hide-drawers)
-                 (setq buffer-read-only t)
-                 (goto-char origin))))
+                   (org-back-to-heading t)
+                   (org-end-of-subtree)
+                   (insert "\n")
+                   (let ((comments (zhihu-reader--normalize-comments json)))
+                     (unless comments
+                       (message "知乎返回 0 条评论（可能已删除或折叠）"))
+                     (zhihu-reader--clear-comment-body marker)
+                     (zhihu-reader--insert-comments comments level)
+                     (zhihu-reader--set-comment-paging marker json)
+                     (zhihu-reader--set-comment-status
+                      marker (if comments "loaded" "empty") (length comments)))
+                   (save-excursion
+                     (goto-char marker)
+                     (org-entry-put nil "ZHIHU-COMMENTS-LOADED" "t"))
+                   (if show
+                       (zhihu-reader--show-comment-subtree marker)
+                     (ignore-errors (org-fold-hide-subtree)))
+                   (zhihu-reader--hide-drawers)
+                   (setq buffer-read-only t)))))
          (remhash id zhihu-reader--comments-inflight)))
      (lambda (error)
        (remhash id zhihu-reader--comments-inflight)
@@ -414,7 +413,6 @@ When SHOW is non-nil, expand the comments subtree."
 CURSOR selects the page; SHOW expands the subtree; REPLACE clears the old
 child comments first (used by previous-page navigation)."
   (let ((buffer (current-buffer))
-        (origin (copy-marker (point)))
         (generation zhihu-reader--generation)
         (level (save-excursion
                  (goto-char marker)
@@ -426,28 +424,28 @@ child comments first (used by previous-page navigation)."
        (when (zhihu-reader--generation-current-p buffer generation)
          (with-current-buffer buffer
            (let ((inhibit-read-only t))
-             (goto-char marker)
-             (org-back-to-heading t)
-             (when replace
-               (zhihu-reader--clear-comment-body marker)
-               (goto-char marker)
-               (org-back-to-heading t))
-             (org-end-of-subtree)
-             (insert "\n")
-             (let ((comments (zhihu-reader--normalize-comments json)))
-               (unless comments
-                 (message "知乎返回 0 条评论（可能已删除或折叠）"))
-               (zhihu-reader--insert-comments comments level comment-id))
              (save-excursion
                (goto-char marker)
-               (org-entry-put nil "ZHIHU-CHILDREN-LOADED" "t")
-               (zhihu-reader--set-child-paging marker json)
-               (if show
-                   (zhihu-reader--show-comment-subtree marker)
-                 (ignore-errors (org-fold-hide-subtree)))
-               (zhihu-reader--hide-drawers))
-             (setq buffer-read-only t)
-             (goto-char origin)))))
+               (org-back-to-heading t)
+               (when replace
+                 (zhihu-reader--clear-comment-body marker)
+                 (goto-char marker)
+                 (org-back-to-heading t))
+               (org-end-of-subtree)
+               (insert "\n")
+               (let ((comments (zhihu-reader--normalize-comments json)))
+                 (unless comments
+                   (message "知乎返回 0 条评论（可能已删除或折叠）"))
+                 (zhihu-reader--insert-comments comments level comment-id))
+               (save-excursion
+                 (goto-char marker)
+                 (org-entry-put nil "ZHIHU-CHILDREN-LOADED" "t")
+                 (zhihu-reader--set-child-paging marker json)
+                 (if show
+                     (zhihu-reader--show-comment-subtree marker)
+                   (ignore-errors (org-fold-hide-subtree)))
+                 (zhihu-reader--hide-drawers)
+                 (setq buffer-read-only t)))))))
      (lambda (error)
        (message "子评论加载失败: %s" error)))))
 
