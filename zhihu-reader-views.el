@@ -149,6 +149,8 @@ BUFFER-NAME overrides the target buffer for search/article views."
         (zhihu-reader-user-articles (match-string 1 path) nil "*Zhihu User Articles*"))
        ((string-match "/people/\\([^/?]+\\)/pins" path)
         (zhihu-reader-user-pins (match-string 1 path) nil "*Zhihu User Pins*"))
+       ((string-match "/people/\\([^/?]+\\)/columns" path)
+        (zhihu-reader-user-columns (match-string 1 path) nil "*Zhihu User Columns*"))
        ((string-match "/people/\\([^/?]+\\)/followers" path)
         (zhihu-reader-user-followers (match-string 1 path) nil "*Zhihu Followers*"))
        ((string-match "/people/\\([^/?]+\\)/following" path)
@@ -157,6 +159,8 @@ BUFFER-NAME overrides the target buffer for search/article views."
         (zhihu-reader-user (match-string 1 path) "*Zhihu User*"))
        ((string-match "/topic/\\([0-9]+\\)" path)
         (zhihu-reader-topic (match-string 1 path) nil "*Zhihu Topic*"))
+       ((string-match "/column/\\([^/?]+\\)" path)
+        (zhihu-reader-column (match-string 1 path) nil "*Zhihu Column*"))
        ((string-match "/collection/\\([0-9]+\\)" path)
         (zhihu-reader-collection (match-string 1 path) nil "*Zhihu Collection*"))
        ((string= path "/hot")
@@ -1005,8 +1009,8 @@ With FORCE non-nil, bypass the page cache."
                            (or (zhihu-reader--alist-get 'voteup_count json) 0)
                            (or (zhihu-reader--alist-get 'thanked_count json) 0))))
             "\n\n"))
-          (insert (format "\n[[https://www.zhihu.com/people/%s/answers][回答]]  [[https://www.zhihu.com/people/%s/articles][文章]]  [[https://www.zhihu.com/people/%s/pins][想法]]  [[https://www.zhihu.com/people/%s/followers][粉丝]]  [[https://www.zhihu.com/people/%s/following][关注]]\n"
-                          token token token token token))
+          (insert (format "\n[[https://www.zhihu.com/people/%s/answers][回答]]  [[https://www.zhihu.com/people/%s/articles][文章]]  [[https://www.zhihu.com/people/%s/columns][专栏]]  [[https://www.zhihu.com/people/%s/pins][想法]]  [[https://www.zhihu.com/people/%s/followers][粉丝]]  [[https://www.zhihu.com/people/%s/following][关注]]\n"
+                          token token token token token token))
           (goto-char (point-min))
           (ignore-errors (org-fold-show-all))
           (zhihu-reader--hide-drawers)
@@ -1136,6 +1140,70 @@ With FORCE non-nil, bypass the page cache."
                          token page)))
       (zhihu-reader--render-user-list
        title users (list 'user-relations token kind page buffer) buffer))))
+
+(defun zhihu-reader--render-columns (json buffer token)
+  "Render column contributions JSON in BUFFER."
+  (let ((data (append (or (zhihu-reader--alist-get 'data json) []) nil)))
+    (with-current-buffer (get-buffer-create buffer)
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (zhihu-reader-mode)
+        (setq-local zhihu-reader--view (list 'user-columns token 1 buffer))
+        (insert (format "#+TITLE: 专栏 · %s\n#+STARTUP: overview\n\n" token))
+        (dolist (entry data)
+          (let* ((column (or (zhihu-reader--alist-get 'column entry) entry))
+                 (id (zhihu-reader--alist-get 'id column))
+                 (title (or (zhihu-reader--alist-get 'title column) "专栏"))
+                 (count (or (zhihu-reader--alist-get 'contributions_count entry) 0)))
+            (insert (format "* %s\n  %s 篇\n\n"
+                            (org-link-make-string
+                             (format "https://www.zhihu.com/column/%s" id)
+                             (zhihu-reader--safe-title title))
+                            count))))
+        (if (null data) (insert "没有专栏。\n"))
+        (goto-char (point-min))
+        (ignore-errors (org-overview))
+        (setq buffer-read-only t)))
+    (pop-to-buffer (get-buffer-create buffer))))
+
+(defun zhihu-reader-user-columns (token &optional page buffer-name)
+  "List TOKEN's column contributions."
+  (interactive (list (or (org-entry-get nil "ZHIHU-AUTHOR-TOKEN")
+                         (read-string "知乎用户 url_token: "))
+                     (prefix-numeric-value current-prefix-arg)))
+  (let* ((token (or token (read-string "知乎用户 url_token: ")))
+         (page (or page 1))
+         (buffer (or buffer-name "*Zhihu User Columns*"))
+         (url (format "https://www.zhihu.com/api/v4/members/%s/column-contributions?limit=20&offset=%d"
+                      token (* 20 (1- page)))))
+    (if noninteractive
+        (zhihu-reader--render-columns
+         (plist-get (zhihu-reader--http-json "GET" url nil nil) :json) buffer token)
+      (zhihu-reader--async-custom
+       "用户专栏" (list 'user-columns token page buffer) url buffer
+       (lambda (json) (zhihu-reader--render-columns json buffer token))))))
+
+(defun zhihu-reader-column (id &optional page buffer-name)
+  "Open column ID's articles."
+  (interactive (list (or (read-string "知乎专栏 ID: ")
+                         (user-error "专栏 ID 为空"))
+                     (prefix-numeric-value current-prefix-arg)))
+  (let* ((page (or page 1))
+         (buffer (or buffer-name "*Zhihu Column*"))
+         (url (format "https://www.zhihu.com/api/v4/columns/%s/articles?limit=20&offset=%d"
+                      id (* 20 (1- page))))
+         (title (format "专栏 %s · 第 %d 页" id page))
+         (view (list 'column id page buffer)))
+    (if noninteractive
+        (zhihu-reader--render title
+                              (zhihu-reader--normalize-items
+                               (zhihu-reader--fetch-json url))
+                              view buffer)
+      (zhihu-reader--async-list
+       title view url buffer
+       (lambda (json)
+         (cons title (zhihu-reader--normalize-items json)))
+       nil))))
 
 (defun zhihu-reader-user-articles (token &optional page buffer-name)
   "Open TOKEN's articles."
@@ -1367,6 +1435,12 @@ dedicated buffer (used by internal link routing)."
                              (nth 3 zhihu-reader--view)))
     ('collections
      (zhihu-reader-collections (nth 1 zhihu-reader--view)))
+    ('column (zhihu-reader-column (nth 1 zhihu-reader--view)
+                                  (nth 2 zhihu-reader--view)
+                                  (nth 3 zhihu-reader--view)))
+    ('user-columns (zhihu-reader-user-columns (nth 1 zhihu-reader--view)
+                                              (nth 2 zhihu-reader--view)
+                                              (nth 3 zhihu-reader--view)))
     ('user-relations
      (zhihu-reader--user-relations (nth 1 zhihu-reader--view)
                                    (nth 2 zhihu-reader--view)
@@ -1444,6 +1518,12 @@ dedicated buffer (used by internal link routing)."
        (zhihu-reader-user-articles (nth 1 view) (1+ (or (nth 2 view) 1)) (nth 3 view)))
       ('user-pins
        (zhihu-reader-user-pins (nth 1 view) (1+ (or (nth 2 view) 1)) (nth 3 view)))
+      ('author
+       (zhihu-reader-author (nth 1 view) (1+ (or (nth 2 view) 1)) (nth 3 view)))
+      ('column
+       (zhihu-reader-column (nth 1 view) (1+ (or (nth 2 view) 1)) (nth 3 view)))
+      ('user-columns
+       (zhihu-reader-user-columns (nth 1 view) (1+ (or (nth 2 view) 1)) (nth 3 view)))
       ('user-relations
        (zhihu-reader--user-relations (nth 1 view) (nth 2 view)
                                      (1+ (or (nth 3 view) 1))
@@ -1496,6 +1576,12 @@ dedicated buffer (used by internal link routing)."
        (zhihu-reader-user-articles (nth 1 view) (max 1 (1- (or (nth 2 view) 1))) (nth 3 view)))
       ('user-pins
        (zhihu-reader-user-pins (nth 1 view) (max 1 (1- (or (nth 2 view) 1))) (nth 3 view)))
+      ('author
+       (zhihu-reader-author (nth 1 view) (max 1 (1- (or (nth 2 view) 1))) (nth 3 view)))
+      ('column
+       (zhihu-reader-column (nth 1 view) (max 1 (1- (or (nth 2 view) 1))) (nth 3 view)))
+      ('user-columns
+       (zhihu-reader-user-columns (nth 1 view) (max 1 (1- (or (nth 2 view) 1))) (nth 3 view)))
       ('user-relations
        (zhihu-reader--user-relations (nth 1 view) (nth 2 view)
                                      (max 1 (1- (or (nth 3 view) 1)))

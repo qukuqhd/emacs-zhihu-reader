@@ -221,6 +221,8 @@ M-x zhihu-reader-user      ; user profile
 M-x zhihu-reader-notifications ; notifications
 M-x zhihu-reader-user-followers ; followers list
 M-x zhihu-reader-user-followees ; following-users list
+M-x zhihu-reader-user-columns ; user column contributions
+M-x zhihu-reader-column ; column articles
 M-x zhihu-reader-user-articles ; user articles
 M-x zhihu-reader-user-pins ; user pins
 M-x zhihu-reader-collections ; list user's collections
