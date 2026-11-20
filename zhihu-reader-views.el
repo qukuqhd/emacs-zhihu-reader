@@ -1238,5 +1238,104 @@ dedicated buffer (used by internal link routing)."
          (zhihu-reader-following previous)))
       (_ (user-error "当前视图没有上一页")))))
 
+
+;;; Asynchronous wrappers for read-only views
+
+(defun zhihu-reader--asyncify-call (orig args title view url buffer)
+  "Run ORIG with mocked HTTP after asynchronously fetching URL."
+  (if noninteractive
+      (apply orig args)
+    (zhihu-reader--async-custom
+     title view url buffer
+     (lambda (json)
+       (let ((noninteractive t))
+         (cl-letf (((symbol-function 'zhihu-reader--http-json)
+                    (lambda (&rest _)
+                      (list :status 200 :json json :body ""))))
+           (apply orig args)))))))
+
+(defun zhihu-reader--asyncify-user (orig token &optional buffer-name)
+  (zhihu-reader--asyncify-call
+   orig (list token buffer-name) "用户主页"
+   (list 'user token (or buffer-name "*Zhihu User*"))
+   (format "https://www.zhihu.com/api/v4/members/%s?include=name,headline,description,follower_count,following_count,answer_count,articles_count,is_following,url_token" token)
+   (or buffer-name "*Zhihu User*")))
+
+(defun zhihu-reader--asyncify-notifications (orig &optional cursor)
+  (zhihu-reader--asyncify-call
+   orig (list cursor) "通知"
+   (list 'notifications cursor)
+   (if (and cursor (stringp cursor)
+            (string-prefix-p "https://api.zhihu.com/notifications/" cursor))
+       cursor
+     "https://api.zhihu.com/notifications/v3/message/v3")
+   "*Zhihu Notifications*"))
+
+(defun zhihu-reader--asyncify-notification-timeline (orig category &optional cursor)
+  (let ((url (if (and cursor (stringp cursor)
+                       (string-prefix-p "https://api.zhihu.com/notifications/" cursor))
+                  cursor
+                (if (equal category "invite")
+                    "https://api.zhihu.com/notifications/v3/timeline/entry/invite?invite_with_time_slice=1&limit=20"
+                  (format "https://api.zhihu.com/notifications/v3/timeline/entry/%s?limit=20" category)))))
+    (zhihu-reader--asyncify-call
+     orig (list category cursor) (format "通知 · %s" category)
+     (list 'notification-timeline category cursor) url "*Zhihu Notifications*")))
+
+(defun zhihu-reader--asyncify-user-relations (orig token kind &optional page buffer-name)
+  (let* ((page (or page 1))
+         (buffer (or buffer-name
+                     (if (equal kind "followers")
+                         "*Zhihu Followers*" "*Zhihu Following*")))
+         (url (format "https://www.zhihu.com/api/v4/members/%s/%s?limit=20&offset=%d"
+                      token kind (* 20 (1- page)))))
+    (zhihu-reader--asyncify-call
+     orig (list token kind page buffer-name)
+     (format "%s · %s" (if (equal kind "followers") "粉丝" "关注") token)
+     (list 'user-relations token kind page buffer) url buffer)))
+
+(defun zhihu-reader--asyncify-user-articles (orig token &optional page buffer-name)
+  (let* ((page (or page 1))
+         (buffer (or buffer-name "*Zhihu User Articles*"))
+         (url (format "https://www.zhihu.com/api/v4/members/%s/articles?limit=20&offset=%d"
+                      token (* 20 (1- page)))))
+    (zhihu-reader--asyncify-call
+     orig (list token page buffer-name) "用户文章"
+     (list 'user-articles token page buffer) url buffer)))
+
+(defun zhihu-reader--asyncify-user-pins (orig token &optional page buffer-name)
+  (let* ((page (or page 1))
+         (buffer (or buffer-name "*Zhihu User Pins*"))
+         (url (format "https://www.zhihu.com/api/v4/members/%s/pins?limit=20&offset=%d"
+                      token (* 20 (1- page)))))
+    (zhihu-reader--asyncify-call
+     orig (list token page buffer-name) "用户想法"
+     (list 'user-pins token page buffer) url buffer)))
+
+(defun zhihu-reader--asyncify-search-people (orig query &optional page buffer-name)
+  (let* ((page (or page 1))
+         (buffer (or buffer-name "*Zhihu People Search*"))
+         (url (zhihu-reader--search-type-url "people" query page)))
+    (zhihu-reader--asyncify-call
+     orig (list query page buffer-name) "用户搜索"
+     (list 'search-people query page buffer) url buffer)))
+
+(defun zhihu-reader--asyncify-search-topics (orig query &optional page buffer-name)
+  (let* ((page (or page 1))
+         (buffer (or buffer-name "*Zhihu Topic Search*"))
+         (url (zhihu-reader--search-type-url "topic" query page)))
+    (zhihu-reader--asyncify-call
+     orig (list query page buffer-name) "话题搜索"
+     (list 'search-topics query page buffer) url buffer)))
+
+(advice-add 'zhihu-reader-user :around #'zhihu-reader--asyncify-user)
+(advice-add 'zhihu-reader-notifications :around #'zhihu-reader--asyncify-notifications)
+(advice-add 'zhihu-reader-notification-timeline :around #'zhihu-reader--asyncify-notification-timeline)
+(advice-add 'zhihu-reader--user-relations :around #'zhihu-reader--asyncify-user-relations)
+(advice-add 'zhihu-reader-user-articles :around #'zhihu-reader--asyncify-user-articles)
+(advice-add 'zhihu-reader-user-pins :around #'zhihu-reader--asyncify-user-pins)
+(advice-add 'zhihu-reader-search-people :around #'zhihu-reader--asyncify-search-people)
+(advice-add 'zhihu-reader-search-topics :around #'zhihu-reader--asyncify-search-topics)
+
 (provide 'zhihu-reader-views)
 ;;; zhihu-reader-views.el ends here
