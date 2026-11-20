@@ -143,6 +143,12 @@ BUFFER-NAME overrides the target buffer for search/article views."
         (zhihu-reader-question (match-string 1 path)))
        ((string-match "/p/\\([0-9]+\\)" path)
         (zhihu-reader-article (match-string 1 path)))
+       ((string-match "/people/\\([^/?]+\\)/answers" path)
+        (zhihu-reader-author (match-string 1 path) nil "*Zhihu Author*"))
+       ((string-match "/people/\\([^/?]+\\)/articles" path)
+        (zhihu-reader-user-articles (match-string 1 path) nil "*Zhihu User Articles*"))
+       ((string-match "/people/\\([^/?]+\\)/pins" path)
+        (zhihu-reader-user-pins (match-string 1 path) nil "*Zhihu User Pins*"))
        ((string-match "/people/\\([^/?]+\\)/followers" path)
         (zhihu-reader-user-followers (match-string 1 path) nil "*Zhihu Followers*"))
        ((string-match "/people/\\([^/?]+\\)/following" path)
@@ -949,7 +955,7 @@ With FORCE non-nil, bypass the page cache."
    (list (or (org-entry-get nil "ZHIHU-AUTHOR-TOKEN")
              (read-string "知乎用户 url_token: "))))
   (let* ((token (or token (read-string "知乎用户 url_token: ")))
-         (url (format "https://www.zhihu.com/api/v4/members/%s?include=name,headline,description,follower_count,following_count,answer_count,articles_count,is_following,url_token"
+         (url (format "https://www.zhihu.com/api/v4/members/%s?include=name,headline,description,follower_count,following_count,answer_count,question_count,articles_count,pins_count,voteup_count,thanked_count,is_following,url_token,badge_v2,business,locations,avatar_url"
                       token))
          (resp (zhihu-reader--http-json "GET" url nil nil))
          (json (plist-get resp :json))
@@ -975,17 +981,34 @@ With FORCE non-nil, bypass the page cache."
            (mapconcat
             #'identity
             (delq nil
-                  (list (zhihu-reader--alist-get 'headline json)
-                        (zhihu-reader--alist-get 'description json)
-                        (format "关注 %s · 粉丝 %s · 回答 %s · 文章 %s"
-                                (or (zhihu-reader--alist-get 'following_count json) 0)
-                                (or (zhihu-reader--alist-get 'follower_count json) 0)
-                                (or (zhihu-reader--alist-get 'answer_count json) 0)
-                                (or (zhihu-reader--alist-get 'articles_count json) 0))))
+                  (list
+                   (zhihu-reader--alist-get 'headline json)
+                   (zhihu-reader--alist-get 'description json)
+                   (let ((badge (zhihu-reader--alist-get 'title (zhihu-reader--alist-get 'badge_v2 json))))
+                     (and badge (format "认证：%s" badge)))
+                   (let ((business (zhihu-reader--alist-get 'name (zhihu-reader--alist-get 'business json))))
+                     (and business (format "领域：%s" business)))
+                   (let ((locations (zhihu-reader--alist-get 'locations json)))
+                     (when locations
+                       (format "所在地：%s"
+                               (mapconcat (lambda (loc) (or (zhihu-reader--alist-get 'name loc) ""))
+                                          (if (vectorp locations) (append locations nil) locations)
+                                          " · "))))
+                   (format "回答 %s · 文章 %s · 想法 %s · 提问 %s"
+                           (or (zhihu-reader--alist-get 'answer_count json) 0)
+                           (or (zhihu-reader--alist-get 'articles_count json) 0)
+                           (or (zhihu-reader--alist-get 'pins_count json) 0)
+                           (or (zhihu-reader--alist-get 'question_count json) 0))
+                   (format "关注 %s · 粉丝 %s · 获赞 %s · 感谢 %s"
+                           (or (zhihu-reader--alist-get 'following_count json) 0)
+                           (or (zhihu-reader--alist-get 'follower_count json) 0)
+                           (or (zhihu-reader--alist-get 'voteup_count json) 0)
+                           (or (zhihu-reader--alist-get 'thanked_count json) 0))))
             "\n\n"))
-          (insert (format "\n[[https://www.zhihu.com/people/%s/answers][查看回答]]\n" token))
+          (insert (format "\n[[https://www.zhihu.com/people/%s/answers][回答]]  [[https://www.zhihu.com/people/%s/articles][文章]]  [[https://www.zhihu.com/people/%s/pins][想法]]  [[https://www.zhihu.com/people/%s/followers][粉丝]]  [[https://www.zhihu.com/people/%s/following][关注]]\n"
+                          token token token token token))
           (goto-char (point-min))
-          (ignore-errors (org-overview))
+          (ignore-errors (org-fold-show-all))
           (zhihu-reader--hide-drawers)
           (setq buffer-read-only t)))
       (pop-to-buffer (get-buffer buffer))
