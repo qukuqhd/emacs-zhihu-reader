@@ -47,6 +47,7 @@ selected comments/replies in a separate buffer.
 | `zhihu-reader-search-content-type` | `all` | Search: all/answer/article |
 | `zhihu-reader-search-time-range` | `all` | Search: day/week/month/year |
 | `zhihu-reader-copy-link-include-title` | t | Prepend question/article title to copied links |
+| `zhihu-reader-enable-pixel-scroll` | t | Pixel-precision wheel scrolling |
 | `zhihu-reader-max-excerpt` | 1200 | Excerpt truncation length |
 | `zhihu-reader-render-images` | t | Inline images |
 | `zhihu-reader-image-cache` | `~/.cache/.../images` | Image cache directory |

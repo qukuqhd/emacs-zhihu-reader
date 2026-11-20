@@ -152,6 +152,11 @@ ACTUAL is an optional loaded comment count."
   :type '(choice (const "score") (const "time"))
   :group 'zhihu-reader)
 
+(defcustom zhihu-reader-enable-pixel-scroll t
+  "Enable pixel-precision mouse-wheel scrolling in Zhihu buffers."
+  :type 'boolean
+  :group 'zhihu-reader)
+
 (defcustom zhihu-reader-default-expand-questions nil
   "Whether question subtrees start expanded when a page is rendered."
   :type 'boolean
@@ -913,7 +918,14 @@ questions when a subtree is shown, even if global fold state leaked."
   "Major mode for Zhihu reader buffers."
   (setq-local org-startup-folded 'overview)
   (setq-local truncate-lines nil)
+  (setq-local scroll-conservatively 101)
+  (setq-local scroll-step 1)
+  (setq-local auto-window-vscroll nil)
   (setq-local org-display-remote-inline-images 'skip)
+  (when (and zhihu-reader-enable-pixel-scroll
+             (fboundp 'pixel-scroll-precision-mode))
+    (require 'pixel-scroll)
+    (pixel-scroll-precision-mode 1))
   (add-hook 'org-cycle-hook #'zhihu-reader--after-cycle nil t)
   (setq-local mode-line-misc-info
               (cons '(:eval (zhihu-reader--mode-line-unread))
