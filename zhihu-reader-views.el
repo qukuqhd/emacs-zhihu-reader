@@ -677,6 +677,78 @@ CURSOR is an optional `moments_v3' paging URL."
     (zhihu-reader--save-entry-file zhihu-reader-later-file nil)
     (message "稍后读已清空")))
 
+(defun zhihu-reader--record-search-history (query)
+  "Record QUERY in search history."
+  (when (and query (not (string-empty-p query)))
+    (let* ((url (format "https://www.zhihu.com/search?q=%s&type=content"
+                        (url-hexify-string query)))
+           (entries (zhihu-reader--load-entry-file zhihu-reader-search-history-file))
+           (entry (list :title query :url url :time (float-time)))
+           (entries (cons entry
+                          (seq-remove (lambda (item)
+                                        (equal (plist-get item :url) url))
+                                      entries))))
+      (zhihu-reader--save-entry-file
+       zhihu-reader-search-history-file (seq-take entries 100)))))
+
+(defun zhihu-reader-search-history ()
+  "Open search history."
+  (interactive)
+  (zhihu-reader--render-link-list
+   "知乎搜索历史"
+   (zhihu-reader--load-entry-file zhihu-reader-search-history-file)
+   '(search-history) "*Zhihu Search History*"))
+
+(defun zhihu-reader-clear-search-history ()
+  "Clear search history."
+  (interactive)
+  (when (yes-or-no-p "清空搜索历史？")
+    (zhihu-reader--save-entry-file zhihu-reader-search-history-file nil)
+    (message "搜索历史已清空")))
+
+(defun zhihu-reader-remove-later ()
+  "Remove the URL at point from read-later."
+  (interactive)
+  (let ((url (or (zhihu-reader--link-at-point)
+                 (zhihu-reader--current-url))))
+    (unless url (user-error "光标不在稍后读条目上"))
+    (let* ((entries (zhihu-reader--load-entry-file zhihu-reader-later-file))
+           (remaining (seq-remove (lambda (item)
+                                    (equal (plist-get item :url) url))
+                                  entries)))
+      (zhihu-reader--save-entry-file zhihu-reader-later-file remaining)
+      (message "已从稍后读移除")
+      (when (derived-mode-p 'zhihu-reader-mode)
+        (zhihu-reader-later-list)))))
+
+(defun zhihu-reader-store-link ()
+  "Store the current Zhihu content as an Org link."
+  (interactive)
+  (let ((url (zhihu-reader--current-url))
+        (title (or (zhihu-reader--share-title) "知乎")))
+    (unless (and url (not (string-empty-p url)))
+      (user-error "光标不在知乎内容上"))
+    (require 'org)
+    (org-link-store-props :type "https" :link url :description title)
+    (message "已保存 Org 链接: %s" title)))
+
+(defun zhihu-reader-capture ()
+  "Append the current Zhihu content to `zhihu-reader-capture-file'."
+  (interactive)
+  (let ((url (zhihu-reader--current-url))
+        (title (or (zhihu-reader--share-title) "知乎")))
+    (unless (and url (not (string-empty-p url)))
+      (user-error "光标不在知乎内容上"))
+    (make-directory (file-name-directory zhihu-reader-capture-file) t)
+    (with-current-buffer (find-file-noselect zhihu-reader-capture-file)
+      (goto-char (point-max))
+      (unless (bolp) (insert "\n"))
+      (insert (format "* [[%s][%s]]\\n  %s\\n"
+                      url (zhihu-reader--safe-title title)
+                      (format-time-string "%Y-%m-%d %H:%M")))
+      (save-buffer))
+    (message "已收藏到 %s" zhihu-reader-capture-file)))
+
 (defun zhihu-reader--normalize-feed (json)
   "Normalize JSON and filter already-seen recommendations."
   (zhihu-reader--filter-seen (zhihu-reader--normalize-items json)))
@@ -1155,6 +1227,7 @@ dedicated buffer (used by internal link routing)."
          (key (list 'search query page buffer-name))
          (url (zhihu-reader--search-url query page))
          (title (format "搜索 · %s · 第 %d 页" query page)))
+    (zhihu-reader--record-search-history query)
     (if (and (not force) (zhihu-reader--show-cached key buffer-name))
         (message "使用缓存的搜索第 %d 页" page)
       (if noninteractive
@@ -1440,3 +1513,6 @@ dedicated buffer (used by internal link routing)."
 
 (provide 'zhihu-reader-views)
 ;;; zhihu-reader-views.el ends here
+
+(defvar org-store-link-functions nil)
+(add-to-list 'org-store-link-functions #'zhihu-reader-store-link)

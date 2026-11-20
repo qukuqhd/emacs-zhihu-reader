@@ -99,6 +99,18 @@ Written by `zhihu-reader-set-cookie' with mode 0600."
   :type 'file
   :group 'zhihu-reader)
 
+(defcustom zhihu-reader-search-history-file
+  (expand-file-name "~/.local/state/zhihu-reader/search-history.eld")
+  "File used to persist search history."
+  :type 'file
+  :group 'zhihu-reader)
+
+(defcustom zhihu-reader-capture-file
+  (expand-file-name "~/org/inbox.org")
+  "Default Org file used by `zhihu-reader-capture'."
+  :type 'file
+  :group 'zhihu-reader)
+
 (defcustom zhihu-reader-later-file
   (expand-file-name "~/.local/state/zhihu-reader/later.eld")
   "File used to persist read-later entries."

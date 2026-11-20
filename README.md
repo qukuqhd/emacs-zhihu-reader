@@ -59,6 +59,8 @@ selected comments/replies in a separate buffer.
 | `zhihu-reader-bookmarks-file` | `~/.local/state/.../bookmarks.eld` | Bookmarks |
 | `zhihu-reader-history-file` | `~/.local/state/.../history.eld` | Reading history |
 | `zhihu-reader-later-file` | `~/.local/state/.../later.eld` | Read later |
+| `zhihu-reader-search-history-file` | `~/.local/state/.../search-history.eld` | Search history |
+| `zhihu-reader-capture-file` | `~/org/inbox.org` | Org capture target |
 | `zhihu-reader-article-directory` | `~/org/zhihu/articles` | New article sources |
 
 ## Files
@@ -226,6 +228,9 @@ M-x zhihu-reader-delete-collection ; delete collection
 M-x zhihu-reader-notification-timeline ; categorized notifications
 M-x zhihu-reader-insert-uploaded-image ; upload a local image into Org
 M-x zhihu-reader-search-sort ; change search sort
+M-x zhihu-reader-search-history ; search history
+M-x zhihu-reader-store-link ; store Org link
+M-x zhihu-reader-capture ; append to Org inbox
 M-x zhihu-reader-open-zhihu-url ; route a Zhihu URL internally
 M-x zhihu-reader-read-url  ; EAF + Readability fallback
 M-x zhihu-reader-edit-at-point ; edit answer/comment in an Org buffer
