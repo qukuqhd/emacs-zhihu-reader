@@ -66,6 +66,39 @@
                       (zhihu-reader--extract-images html)))
          items)))))
 
+(defun zhihu-reader--ensure-question-detail (items question-id)
+  "Ensure ITEMS has a title/detail for QUESTION-ID.
+Fetch the independent question detail endpoint when the answers API did
+not provide one (for example, a question with zero answers)."
+  (let ((json (zhihu-reader--fetch-question-detail question-id)))
+    (if (null json)
+        items
+      (let* ((title (zhihu-reader--alist-get 'title json))
+             (html (or (zhihu-reader--alist-get 'detail json) ""))
+             (org (zhihu-reader--html-to-org html))
+             (images (zhihu-reader--extract-images html)))
+        (if (null items)
+            (list (list :kind "question"
+                        :id question-id
+                        :question-id question-id
+                        :title (or title (format "问题 %s" question-id))
+                        :content org
+                        :images images
+                        :question-detail org
+                        :question-images images))
+          (let ((first (car items)))
+            (setcar items
+                    (plist-put
+                     (plist-put first :question-title
+                                (or title (plist-get first :question-title)))
+                     :question-detail
+                     (if (string-empty-p org)
+                         (plist-get first :question-detail)
+                       org)))
+            (when images
+              (setcar items (plist-put (car items) :question-images images)))
+            items))))))
+
 (defun zhihu-reader--id-or-url (value)
   "Extract a numeric Zhihu id from VALUE, which may be an id or URL."
   (cond
@@ -90,8 +123,10 @@ With FORCE non-nil, bypass the page cache."
     (if (and (not force) (zhihu-reader--show-cached key))
         (message "使用缓存的问题第 %d 页" page)
       (if noninteractive
-          (let* ((items (zhihu-reader--normalize-items
-                         (zhihu-reader--fetch-json url)))
+          (let* ((items (zhihu-reader--ensure-question-detail
+                         (zhihu-reader--normalize-items
+                          (zhihu-reader--fetch-json url))
+                         id))
                  (qtitle (or (plist-get (car items) :question-title)
                              (format "问题 %s" id))))
             (puthash key
@@ -107,7 +142,8 @@ With FORCE non-nil, bypass the page cache."
         (zhihu-reader--async-list
          title key url zhihu-reader--question-buffer
          (lambda (json)
-           (let* ((items (zhihu-reader--normalize-items json))
+           (let* ((items (zhihu-reader--ensure-question-detail
+                          (zhihu-reader--normalize-items json) id))
                   (qtitle (or (plist-get (car items) :question-title)
                               (format "问题 %s" id))))
              (cons (format "问题 · %s · 第 %d 页 · %s" qtitle page order)

@@ -94,6 +94,7 @@ Recommendation and search results are grouped by question:
 
 ```text
 * 问题标题
+** 问题详情
 ** 回答 · author · N 赞
    answer body
 *** 评论 (N)
@@ -104,7 +105,10 @@ Recommendation and search results are grouped by question:
 ```
 
 - `TAB` folds/unfolds a question or answer.
-- `RET` on a question opens `*Zhihu Question*` with its answer list.
+- `RET` on a question opens `*Zhihu Question*` with a separate
+  `问题详情` child heading and its answer list.  The detail is fetched
+  from the independent question endpoint when the answer API has no detail,
+  so questions with zero answers still show their title/detail.
 - `RET` on an answer opens `*Zhihu Answer*` with the full answer body.
 - Content HTML is converted to Org rather than plain text: paragraphs, bold,
   italic, lists, code blocks, quotes, links, Zhihu formulas and tables are

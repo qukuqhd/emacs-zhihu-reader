@@ -428,6 +428,25 @@ POSITION (default point), so later headings/images cannot be swallowed."
      (1+ level) (plist-get item :comment-count) (plist-get item :id))
     (insert "\n")))
 
+(defun zhihu-reader--render-question-detail (item level)
+  "Render ITEM's question detail as a child heading at LEVEL."
+  (let ((detail (plist-get item :question-detail))
+        (images (plist-get item :question-images))
+        (qid (plist-get item :question-id)))
+    (when (or (and detail (not (string-empty-p detail))) images)
+      (zhihu-reader--heading
+       level "问题详情"
+       (append (when (and qid (not (string-empty-p qid)))
+                 (list (cons "ZHIHU-QUESTION" qid)))
+               (list (cons "ZHIHU-QUESTION-DETAIL" "t"))))
+      (when (and detail (not (string-empty-p detail)))
+        (zhihu-reader--body detail))
+      (when images
+        (zhihu-reader--close-open-org-blocks)
+        (zhihu-reader--insert-images images))
+      (zhihu-reader--close-open-org-blocks)
+      (insert "\n"))))
+
 (defun zhihu-reader--render-group (group)
   "Render a group of items sharing a question/article."
   (let* ((first (car group))
@@ -443,15 +462,7 @@ POSITION (default point), so later headings/images cannot be swallowed."
        1 (or qtitle "知乎问题")
        (when (and qid (not (string-empty-p qid)))
          (list (cons "ZHIHU-QUESTION" qid))))
-      (when (not (string-empty-p (or (plist-get first :question-detail) "")))
-        (zhihu-reader--body (plist-get first :question-detail)))
-      (when (plist-get first :question-images)
-        (zhihu-reader--close-open-org-blocks)
-        (zhihu-reader--insert-images (plist-get first :question-images)))
-      (zhihu-reader--close-open-org-blocks)
-      (when (or (not (string-empty-p (or (plist-get first :question-detail) "")))
-                (plist-get first :question-images))
-        (insert "\n"))
+      (zhihu-reader--render-question-detail first 2)
       (dolist (item answers)
         (zhihu-reader--render-answer item 2)))
      ((equal kind "article")
@@ -473,7 +484,10 @@ POSITION (default point), so later headings/images cannot be swallowed."
         (zhihu-reader--heading
          1 (plist-get item :title)
          (list (cons "ZHIHU-QUESTION" (plist-get item :id))))
-        (zhihu-reader--body (plist-get item :content))
+        (zhihu-reader--render-question-detail item 2)
+        (when (and (plist-get item :content)
+                   (not (string-empty-p (plist-get item :content))))
+          (zhihu-reader--body (plist-get item :content)))
         (when (plist-get item :images)
           (zhihu-reader--close-open-org-blocks)
           (zhihu-reader--insert-images (plist-get item :images)))
