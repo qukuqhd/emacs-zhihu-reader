@@ -30,7 +30,9 @@
   (if (and cursor (stringp cursor)
            (string-prefix-p "https://www.zhihu.com/api/v4/comment_v5/" cursor))
       cursor
-    (let ((type (if (equal kind "article") "articles" "answers")))
+    (let ((type (cond ((equal kind "article") "articles")
+                      ((equal kind "pin") "pins")
+                      (t "answers"))))
       (format "https://www.zhihu.com/api/v4/comment_v5/%s/%s/root_comment?order_by=%s"
               type id (if (equal zhihu-reader-comment-order "time") "ts" "score")))))
 

@@ -159,6 +159,8 @@ BUFFER-NAME overrides the target buffer for search/article views."
         (zhihu-reader-user (match-string 1 path) "*Zhihu User*"))
        ((string-match "/topic/\\([0-9]+\\)" path)
         (zhihu-reader-topic (match-string 1 path) nil "*Zhihu Topic*"))
+       ((string-match "/pin/\\([0-9]+\\)" path)
+        (zhihu-reader-pin (match-string 1 path) "*Zhihu Pin*"))
        ((string-match "/column/\\([^/?]+\\)" path)
         (zhihu-reader-column (match-string 1 path) nil "*Zhihu Column*"))
        ((string-match "/collection/\\([0-9]+\\)" path)
@@ -1183,6 +1185,35 @@ With FORCE non-nil, bypass the page cache."
        "用户专栏" (list 'user-columns token page buffer) url buffer
        (lambda (json) (zhihu-reader--render-columns json buffer token))))))
 
+(defun zhihu-reader-pin (id &optional buffer-name)
+  "Open Zhihu pin ID in BUFFER-NAME."
+  (interactive (list (or (read-string "知乎想法 ID: ")
+                         (user-error "想法 ID 为空"))))
+  (let* ((id (zhihu-reader--id-or-url id))
+         (buffer (or buffer-name "*Zhihu Pin*"))
+         (url (format "https://www.zhihu.com/api/v4/pins/%s" id))
+         (resp (zhihu-reader--http-json "GET" url nil nil))
+         (json (plist-get resp :json))
+         (status (plist-get resp :status)))
+    (unless (memq status '(200 201))
+      (user-error "想法加载失败 (HTTP %s)" status))
+    (let* ((html (or (zhihu-reader--alist-get 'content_html json) ""))
+           (item (list :kind "pin" :id id
+                       :title (or (zhihu-reader--truncate
+                                   (zhihu-reader--strip-html
+                                    (zhihu-reader--alist-get 'excerpt_title json))
+                                   80)
+                                  (format "想法 %s" id))
+                       :content (zhihu-reader--html-to-org html)
+                       :images (zhihu-reader--extract-images html)
+                       :comment-count (zhihu-reader--string
+                                       (zhihu-reader--alist-get 'comment_count json))
+                       :author (zhihu-reader--alist-get
+                                'name (zhihu-reader--alist-get 'author json)))))
+      (zhihu-reader--render
+       (format "想法 · %s" (plist-get item :title))
+       (list item) (list 'pin id) buffer))))
+
 (defun zhihu-reader-column (id &optional page buffer-name)
   "Open column ID's articles."
   (interactive (list (or (read-string "知乎专栏 ID: ")
@@ -1289,11 +1320,36 @@ With FORCE non-nil, bypass the page cache."
   (let* ((url (format zhihu-reader-search-url (url-hexify-string query)))
          (url (replace-regexp-in-string
                "offset=0" (format "offset=%d" (* 20 (1- (or page 1)))) url))
+         (url (if (and zhihu-reader-search-content-type
+                       (not (equal zhihu-reader-search-content-type "all")))
+                  (concat url "&vertical="
+                          (url-hexify-string zhihu-reader-search-content-type)
+                          "&vertical_info=0,0,0,0,0,0,0,0,0,0,0,0")
+                url))
+         (time-map '(("day" . "a_day") ("week" . "a_week") ("month" . "a_month")
+                     ("three-months" . "three_months") ("half-year" . "half_a_year")
+                     ("year" . "a_year")))
+         (time (cdr (assoc zhihu-reader-search-time-range time-map)))
+         (url (if time (concat url "&time_interval=" (url-hexify-string time)) url))
          (url (if (and zhihu-reader-search-sort
                        (not (string-empty-p zhihu-reader-search-sort)))
                   (concat url "&sort=" (url-hexify-string zhihu-reader-search-sort))
                 url)))
     url))
+
+(defun zhihu-reader-search-filter ()
+  "Set search content/time filters and refresh the current search."
+  (interactive)
+  (setq zhihu-reader-search-content-type
+        (completing-read "内容类型: " '("all" "answer" "article")
+                         nil t nil nil zhihu-reader-search-content-type))
+  (setq zhihu-reader-search-time-range
+        (completing-read "时间范围: "
+                         '("all" "day" "week" "month" "three-months" "half-year" "year")
+                         nil t nil nil zhihu-reader-search-time-range))
+  (if (eq (car-safe zhihu-reader--view) 'search)
+      (zhihu-reader-refresh)
+    (message "搜索筛选已设置")))
 
 (defun zhihu-reader-search-sort ()
   "Change search sort and refresh the current search if applicable."
@@ -1435,6 +1491,7 @@ dedicated buffer (used by internal link routing)."
                              (nth 3 zhihu-reader--view)))
     ('collections
      (zhihu-reader-collections (nth 1 zhihu-reader--view)))
+    ('pin (zhihu-reader-pin (nth 1 zhihu-reader--view)))
     ('column (zhihu-reader-column (nth 1 zhihu-reader--view)
                                   (nth 2 zhihu-reader--view)
                                   (nth 3 zhihu-reader--view)))
@@ -1691,6 +1748,48 @@ dedicated buffer (used by internal link routing)."
 (advice-add 'zhihu-reader-user-pins :around #'zhihu-reader--asyncify-user-pins)
 (advice-add 'zhihu-reader-search-people :around #'zhihu-reader--asyncify-search-people)
 (advice-add 'zhihu-reader-search-topics :around #'zhihu-reader--asyncify-search-topics)
+
+(defun zhihu-reader-follow-collection (&optional following)
+  "Follow or unfollow the collection in the current view."
+  (interactive (list (y-or-n-p "关注这个收藏夹？")))
+  (unless zhihu-reader-enable-write
+    (user-error "写操作已关闭；请设置 `zhihu-reader-enable-write' 为 t"))
+  (let ((view zhihu-reader--view))
+    (unless (eq (car-safe view) 'collection)
+      (user-error "当前不是收藏夹视图"))
+    (let* ((id (nth 1 view))
+           (url (format "https://www.zhihu.com/api/v4/collections/%s/followers" id))
+           (resp (zhihu-reader--http-json (if following "POST" "DELETE") url nil nil))
+           (status (plist-get resp :status)))
+      (unless (memq status '(200 201 202 204))
+        (error "收藏夹关注操作失败 (HTTP %s): %s" status (plist-get resp :body)))
+      (message (if following "已关注收藏夹" "已取消关注收藏夹")))))
+
+(defun zhihu-reader-export-org (file)
+  "Export the current Zhihu buffer as an Org file FILE."
+  (interactive "F导出 Org 到: ")
+  (with-temp-file file
+    (insert (buffer-substring-no-properties (point-min) (point-max))))
+  (message "已导出 Org: %s" file))
+
+(defun zhihu-reader-export-html (file)
+  "Export the current Zhihu buffer as an HTML file FILE."
+  (interactive "F导出 HTML 到: ")
+  (require 'ox-html)
+  (let ((html (org-export-as 'html nil nil t)))
+    (with-temp-file file (insert html))
+    (message "已导出 HTML: %s" file)))
+
+(defun zhihu-reader-export-markdown (file)
+  "Export the current Zhihu buffer as Markdown FILE."
+  (interactive "F导出 Markdown 到: ")
+  (require 'ox-md)
+  (let ((md (org-md-export-as-markdown nil nil t)))
+    (with-temp-file file
+      (insert (if (bufferp md)
+                  (with-current-buffer md (buffer-string))
+                md)))
+    (message "已导出 Markdown: %s" file)))
 
 (provide 'zhihu-reader-views)
 ;;; zhihu-reader-views.el ends here

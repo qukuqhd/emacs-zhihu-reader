@@ -41,6 +41,8 @@ selected comments/replies in a separate buffer.
 | `zhihu-reader-hot-url` | hot list URL | Hot list endpoint |
 | `zhihu-reader-search-url` | v4 search URL | Search endpoint |
 | `zhihu-reader-search-sort` | nil | Optional search sort |
+| `zhihu-reader-search-content-type` | `all` | Search: all/answer/article |
+| `zhihu-reader-search-time-range` | `all` | Search: day/week/month/year |
 | `zhihu-reader-copy-link-include-title` | t | Prepend question/article title to copied links |
 | `zhihu-reader-max-excerpt` | 1200 | Excerpt truncation length |
 | `zhihu-reader-render-images` | t | Inline images |
@@ -226,6 +228,11 @@ M-x zhihu-reader-column ; column articles
 M-x zhihu-reader-user-articles ; user articles
 M-x zhihu-reader-user-pins ; user pins
 M-x zhihu-reader-collections ; list user's collections
+M-x zhihu-reader-follow-collection ; follow/unfollow collection
+M-x zhihu-reader-export-org ; export Org
+M-x zhihu-reader-export-html ; export HTML
+M-x zhihu-reader-export-markdown ; export Markdown
+M-x zhihu-reader-search-filter ; set content/time filters
 M-x zhihu-reader-create-collection ; create collection
 M-x zhihu-reader-delete-collection ; delete collection
 M-x zhihu-reader-notification-timeline ; categorized notifications

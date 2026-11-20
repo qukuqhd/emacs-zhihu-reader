@@ -149,6 +149,17 @@ Written by `zhihu-reader-set-cookie' with mode 0600."
   :type 'string
   :group 'zhihu-reader)
 
+(defcustom zhihu-reader-search-content-type "all"
+  "Search content filter: all, answer or article."
+  :type '(choice (const "all") (const "answer") (const "article"))
+  :group 'zhihu-reader)
+
+(defcustom zhihu-reader-search-time-range "all"
+  "Search time filter: all, day, week, month, three-months, half-year or year."
+  :type '(choice (const "all") (const "day") (const "week") (const "month")
+                 (const "three-months") (const "half-year") (const "year"))
+  :group 'zhihu-reader)
+
 (defcustom zhihu-reader-copy-link-include-title t
   "When non-nil, prepend the question/article title to copied share links."
   :type 'boolean

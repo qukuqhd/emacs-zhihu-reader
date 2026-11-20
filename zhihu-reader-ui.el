@@ -465,6 +465,20 @@ POSITION (default point), so later headings/images cannot be swallowed."
       (zhihu-reader--render-question-detail first 2)
       (dolist (item answers)
         (zhihu-reader--render-answer item 2)))
+     ((equal kind "pin")
+      (let ((item (car group)))
+        (zhihu-reader--heading
+         1 (or (plist-get item :title) "想法")
+         (list (cons "ZHIHU-PIN" (plist-get item :id))))
+        (zhihu-reader--body (plist-get item :content))
+        (when (plist-get item :images)
+          (zhihu-reader--close-open-org-blocks)
+          (zhihu-reader--insert-images (plist-get item :images)))
+        (zhihu-reader--close-open-org-blocks)
+        (insert "\n")
+        (zhihu-reader--comment-heading
+         2 (plist-get item :comment-count) (plist-get item :id) "pin")
+        (insert "\n")))
      ((equal kind "article")
       (let ((item (car group)))
         (zhihu-reader--heading
@@ -568,10 +582,10 @@ the target buffer."
     (pop-to-buffer buffer)
     (when (and zhihu-reader-render-images (display-graphic-p))
       (with-current-buffer buffer
-        (if (memq (car-safe view) '(question answer article))
+        (if (memq (car-safe view) '(question answer article pin))
             (zhihu-reader--process-buffer-images)
           (zhihu-reader--queue-image-display))))
-    (when (memq (car-safe view) '(question answer article))
+    (when (memq (car-safe view) '(question answer article pin))
       (with-current-buffer buffer
         (zhihu-reader--auto-load-comments)))
     (zhihu-reader--restore-navigation-anchor)
@@ -716,6 +730,7 @@ Non-Zhihu URLs keep the EAF/Readability fallback."
   C-c C-o   在新 buffer 打开评论/回复
   C-c C-r   通知全部标为已读
   C-c C-d   从当前收藏夹移除
+  C-c C-f   关注/取消关注收藏夹
 
 【内容操作】
   C-c v     赞同 / 取消赞同；C-u 反对
@@ -785,6 +800,7 @@ Non-Zhihu URLs keep the EAF/Readability fallback."
     (define-key map (kbd "C-c C-o") #'zhihu-reader-open-comments-buffer)
     (define-key map (kbd "C-c C-r") #'zhihu-reader-notifications-readall)
     (define-key map (kbd "C-c C-d") #'zhihu-reader-remove-from-collection)
+    (define-key map (kbd "C-c C-f") #'zhihu-reader-follow-collection)
     (define-key map (kbd "C-c +") #'zhihu-reader-zoom-in)
     (define-key map (kbd "C-c -") #'zhihu-reader-zoom-out)
     (define-key map (kbd "C-c 0") #'zhihu-reader-zoom-reset)
