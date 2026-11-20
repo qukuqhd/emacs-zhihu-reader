@@ -202,6 +202,8 @@ M-x zhihu-reader-search    ; search
 M-x zhihu-reader-question  ; question + answer list
 M-x zhihu-reader-answer    ; answer + comments
 M-x zhihu-reader-article   ; article in its own buffer
+M-x zhihu-reader-user      ; user profile
+M-x zhihu-reader-notifications ; notifications
 M-x zhihu-reader-open-zhihu-url ; route a Zhihu URL internally
 M-x zhihu-reader-read-url  ; EAF + Readability fallback
 M-x zhihu-reader-edit-at-point ; edit answer/comment in an Org buffer

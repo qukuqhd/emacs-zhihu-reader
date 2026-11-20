@@ -669,6 +669,7 @@ Non-Zhihu URLs keep the EAF/Readability fallback."
 【入口】
   r         推荐流
   h         热榜
+  C-c M     通知
   s         搜索
   S         回答排序（问题视图）
 

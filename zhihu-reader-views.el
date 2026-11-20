@@ -14,6 +14,9 @@
 (require 'zhihu-reader-ui)
 (require 'zhihu-reader-comments)
 
+(defvar-local zhihu-reader--notifications-next nil)
+(defvar-local zhihu-reader--notifications-prev nil)
+
 ;;;; Commands and mode
 
 (defun zhihu-reader--parse-target (value)
@@ -127,7 +130,7 @@ BUFFER-NAME overrides the target buffer for search/article views."
        ((string-match "/p/\\([0-9]+\\)" path)
         (zhihu-reader-article (match-string 1 path)))
        ((string-match "/people/\\([^/?]+\\)" path)
-        (zhihu-reader-author (match-string 1 path) nil "*Zhihu Author*"))
+        (zhihu-reader-user (match-string 1 path) "*Zhihu User*"))
        ((string-match "/topic/\\([0-9]+\\)" path)
         (zhihu-reader-topic (match-string 1 path) nil "*Zhihu Topic*"))
        ((string-match "/collection/\\([0-9]+\\)" path)
@@ -535,6 +538,116 @@ With FORCE non-nil, bypass the page cache."
   (format "https://www.zhihu.com/api/v4/members/%s/answers?include=data%%5B*%%5D.content%%2Cexcerpt%%2Cauthor%%2Cquestion%%2Ccomment_count%%2Cvoteup_count&limit=20&offset=%d&order_by=created"
           token (* 20 (1- (or page 1)))))
 
+(defun zhihu-reader-user (token &optional buffer-name)
+  "Open Zhihu user profile TOKEN in BUFFER-NAME."
+  (interactive
+   (list (or (org-entry-get nil "ZHIHU-AUTHOR-TOKEN")
+             (read-string "知乎用户 url_token: "))))
+  (let* ((token (or token (read-string "知乎用户 url_token: ")))
+         (url (format "https://www.zhihu.com/api/v4/members/%s?include=name,headline,description,follower_count,following_count,answer_count,articles_count,is_following,url_token"
+                      token))
+         (resp (zhihu-reader--http-json "GET" url nil nil))
+         (json (plist-get resp :json))
+         (status (plist-get resp :status))
+         (buffer (or buffer-name "*Zhihu User*")))
+    (unless (memq status '(200 201))
+      (user-error "用户主页加载失败 (HTTP %s)" status))
+    (let ((name (or (zhihu-reader--alist-get 'name json) token)))
+      (with-current-buffer (get-buffer-create buffer)
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (zhihu-reader-mode)
+          (setq-local zhihu-reader--view (list 'user token buffer))
+          (setq-local header-line-format
+                      (format " 知乎用户 %s  | TAB fold  C-c f 关注  g 刷新  q 关闭" name))
+          (insert (format "#+TITLE: 用户 · %s\n#+STARTUP: overview\n\n" name))
+          (zhihu-reader--heading
+           1 name
+           (list (cons "ZHIHU-AUTHOR-TOKEN" token)
+                 (cons "ZHIHU-FOLLOWING"
+                       (if (zhihu-reader--alist-get 'is_following json) "t" "nil"))))
+          (zhihu-reader--body
+           (mapconcat
+            #'identity
+            (delq nil
+                  (list (zhihu-reader--alist-get 'headline json)
+                        (zhihu-reader--alist-get 'description json)
+                        (format "关注 %s · 粉丝 %s · 回答 %s · 文章 %s"
+                                (or (zhihu-reader--alist-get 'following_count json) 0)
+                                (or (zhihu-reader--alist-get 'follower_count json) 0)
+                                (or (zhihu-reader--alist-get 'answer_count json) 0)
+                                (or (zhihu-reader--alist-get 'articles_count json) 0))))
+            "\n\n"))
+          (insert (format "\n[[https://www.zhihu.com/people/%s/answers][查看回答]]\n" token))
+          (goto-char (point-min))
+          (ignore-errors (org-overview))
+          (zhihu-reader--hide-drawers)
+          (setq buffer-read-only t)))
+      (pop-to-buffer (get-buffer buffer))
+      (message "用户主页：%s" name))))
+
+(defun zhihu-reader-notifications (&optional cursor)
+  "Show Zhihu notifications, optionally at CURSOR URL."
+  (interactive)
+  (let* ((url (if (and cursor (stringp cursor)
+                       (string-prefix-p "https://api.zhihu.com/notifications/" cursor))
+                  cursor
+                "https://api.zhihu.com/notifications/v3/message/v3"))
+         (resp (zhihu-reader--http-json "GET" url nil nil))
+         (json (plist-get resp :json))
+         (status (plist-get resp :status))
+         (buffer "*Zhihu Notifications*"))
+    (unless (memq status '(200 201))
+      (user-error "通知加载失败 (HTTP %s)" status))
+    (let* ((paging (zhihu-reader--alist-get 'paging json))
+           (data (append (or (zhihu-reader--alist-get 'data json) []) nil))
+           (unread (zhihu-reader--alist-get 'unread json)))
+      (with-current-buffer (get-buffer-create buffer)
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (zhihu-reader-mode)
+          (setq-local zhihu-reader--view (list 'notifications cursor))
+          (setq-local header-line-format
+                      (format " 知乎通知  | TAB fold  RET open  ] next  [ prev  g refresh  q close"))
+          (insert (format "#+TITLE: 知乎通知%s\n#+STARTUP: overview\n\n"
+                          (if unread
+                              (format " · 未读 %s"
+                                      (or (zhihu-reader--alist-get 'message unread) "?"))
+                            "")))
+          (dolist (entry data)
+            (let* ((content (or (zhihu-reader--alist-get 'content entry) entry))
+                   (title (or (zhihu-reader--alist-get 'title content) "通知"))
+                   (text (or (zhihu-reader--alist-get 'text content) ""))
+                   (link (or (zhihu-reader--alist-get 'target_link content)
+                             (zhihu-reader--alist-get 'target_link entry)))
+                   (created (or (zhihu-reader--alist-get 'created_str entry)
+                                (zhihu-reader--alist-get 'created entry)))
+                   (read (zhihu-reader--alist-get 'is_read entry))
+                   (time (and created
+                              (ignore-errors
+                                (format-time-string
+                                 "%Y-%m-%d %H:%M"
+                                 (seconds-to-time (string-to-number (format "%s" created))))))))
+                (insert (format "* %s%s\n"
+                                (zhihu-reader--safe-title (format "%s" title))
+                                (if read "" " · 未读")))
+                (when (and text (not (string-empty-p text)))
+                  (insert "  " (replace-regexp-in-string "[\r\n]+" " " text) "\n"))
+                (when (and link (not (string-empty-p link)))
+                  (insert "  " (org-link-make-string link "打开") "\n"))
+                (when time (insert "  " time "\n"))
+                (insert "\n")))
+          (if (null data) (insert "没有通知。\n"))
+          (goto-char (point-min))
+          (ignore-errors (org-overview))
+          (setq-local zhihu-reader--notifications-next
+                      (zhihu-reader--alist-get 'next paging))
+          (setq-local zhihu-reader--notifications-prev
+                      (zhihu-reader--alist-get 'previous paging))
+          (setq buffer-read-only t)))
+      (pop-to-buffer (get-buffer buffer))
+      (message "通知：%d 条" (length data)))))
+
 (defun zhihu-reader-author (token &optional page buffer-name)
   "Open author TOKEN's answer list in BUFFER-NAME."
   (interactive
@@ -621,6 +734,9 @@ dedicated buffer (used by internal link routing)."
                                        (nth 3 zhihu-reader--view) t))
     ('answer (zhihu-reader-answer (nth 1 zhihu-reader--view)))
     ('article (zhihu-reader-article (nth 1 zhihu-reader--view)))
+    ('user (zhihu-reader-user (nth 1 zhihu-reader--view)
+                              (nth 2 zhihu-reader--view)))
+    ('notifications (zhihu-reader-notifications (nth 1 zhihu-reader--view)))
     ('author (zhihu-reader-author (nth 1 zhihu-reader--view)
                                   (nth 2 zhihu-reader--view)
                                   (nth 3 zhihu-reader--view)))
@@ -668,6 +784,11 @@ dedicated buffer (used by internal link routing)."
       ('topic (zhihu-reader-topic (nth 1 view)
                                   (1+ (or (nth 2 view) 1))
                                   (nth 3 view)))
+      ('notifications
+       (let ((next zhihu-reader--notifications-next))
+         (unless (and next (not (string-empty-p next)))
+           (user-error "已经是最后一页通知"))
+         (zhihu-reader-notifications next)))
       ('following
        (let ((next zhihu-reader--following-next))
          (unless (and next (not (string-empty-p next)))
@@ -695,6 +816,11 @@ dedicated buffer (used by internal link routing)."
       ('topic (zhihu-reader-topic (nth 1 view)
                                   (max 1 (1- (or (nth 2 view) 1)))
                                   (nth 3 view)))
+      ('notifications
+       (let ((previous zhihu-reader--notifications-prev))
+         (unless (and previous (not (string-empty-p previous)))
+           (user-error "已经是第一页通知"))
+         (zhihu-reader-notifications previous)))
       ('following
        (let ((previous zhihu-reader--following-prev))
          (unless (and previous (not (string-empty-p previous)))
