@@ -56,7 +56,7 @@
   "Return the Org link URL at point, if any."
   (let ((context (org-element-context)))
     (when (eq (org-element-type context) 'link)
-      (org-element-property :raw-link context))))
+      (zhihu-reader--unwrap-redirect (org-element-property :raw-link context)))))
 
 (defun zhihu-reader-article (id &optional buffer-name)
   "Open Zhihu article ID in a dedicated Org buffer."
@@ -109,6 +109,7 @@
   "Open Zhihu URL inside Emacs, using a dedicated buffer when appropriate.
 BUFFER-NAME overrides the target buffer for search/article views."
   (interactive "s知乎 URL: ")
+  (setq url (zhihu-reader--unwrap-redirect url))
   (if (not (zhihu-reader--zhihu-url-p url))
       (zhihu-reader-read-url url)
     (let* ((parsed (url-generic-parse-url url))

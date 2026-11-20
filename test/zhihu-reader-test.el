@@ -62,5 +62,13 @@
   (should (string-match-p "风控" (zhihu-reader--http-status-message 403)))
   (should (string-match-p "频繁" (zhihu-reader--http-status-message 429))))
 
+
+(ert-deftest zhihu-reader-unwrap-link-redirect ()
+  (should (equal (zhihu-reader--unwrap-redirect
+                  "https://link.zhihu.com/?target=https%3A//edu.51cto.com/sd/de7e7")
+                 "https://edu.51cto.com/sd/de7e7"))
+  (should (equal (zhihu-reader--unwrap-redirect "https://example.com/x")
+                 "https://example.com/x")))
+
 (provide 'zhihu-reader-test)
 ;;; zhihu-reader-test.el ends here

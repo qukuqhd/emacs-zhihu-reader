@@ -703,6 +703,23 @@ loading contents; errors are shown in BUFFER."
   "Normalize whitespace in HTML text."
   (replace-regexp-in-string "[ \t\n\r]+" " " (or text "")))
 
+(defun zhihu-reader--unwrap-redirect (url)
+  "Return the target URL for a Zhihu link.zhihu.com redirect, or URL.
+Only unwrap when a `target' query parameter is present; direct external
+links and ordinary Zhihu URLs are returned unchanged."
+  (if (not (and (stringp url)
+                (string-match-p "\\`https?://link\\.zhihu\\.com/" url)))
+      url
+    (let* ((parsed (url-generic-parse-url url))
+           (query (or (url-filename parsed) ""))
+           (pos (string-match "\\?" query)))
+      (or (and pos
+               (let ((target (cadr (assoc "target"
+                                          (url-parse-query-string
+                                           (substring query (1+ pos)))))))
+                 (and target (not (string-empty-p target)) target)))
+          url))))
+
 (defun zhihu-reader--dom-to-org (node &optional list-type)
   "Convert DOM NODE to an Org string.
 LIST-TYPE is `ul' or `ol' when inside a list."
@@ -750,6 +767,7 @@ LIST-TYPE is `ul' or `ol' when inside a list."
                 (href (if (string-match "link\\.zhihu\\.com/?target=\\([^&]+\\)" href)
                           (url-unhex-string (match-string 1 href))
                         href))
+                (href (zhihu-reader--unwrap-redirect href))
                 (label (string-trim (funcall inner))))
            (cond
             ((zhihu-reader--image-url-p href) "")
