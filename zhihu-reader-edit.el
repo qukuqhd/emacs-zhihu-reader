@@ -121,6 +121,16 @@ This implementation is self-contained and respects
     (zhihu-reader--open-edit-buffer
      "answer" nil qid "新回答" "")))
 
+(defun zhihu-reader-insert-uploaded-image (file)
+  "Upload local FILE and insert its Zhihu image link at point."
+  (interactive "f图片文件: ")
+  (unless (derived-mode-p 'org-mode)
+    (user-error "请在 Org 文章或编辑 buffer 中使用"))
+  (let ((url (zhihu-reader-upload-image file "article")))
+    (insert (format "[[%s][图片]]\n" url))
+    (kill-new url)
+    (message "图片已上传并插入: %s" url)))
+
 (defun zhihu-reader-save-draft ()
   "Save the current edit buffer as an Org draft."
   (interactive)
@@ -243,6 +253,7 @@ This is destructive and requires `zhihu-reader-enable-write'."
     (define-key map (kbd "C-c C-p") #'zhihu-reader-edit-publish)
     (define-key map (kbd "C-c C-k") #'zhihu-reader-edit-cancel)
     (define-key map (kbd "C-c C-s") #'zhihu-reader-save-draft)
+    (define-key map (kbd "C-c I") #'zhihu-reader-insert-uploaded-image)
     map)
   "Keymap for `zhihu-reader-edit-mode'.")
 

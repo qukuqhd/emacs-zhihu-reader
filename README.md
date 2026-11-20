@@ -215,6 +215,7 @@ M-x zhihu-reader-user-pins ; user pins
 M-x zhihu-reader-create-collection ; create collection
 M-x zhihu-reader-delete-collection ; delete collection
 M-x zhihu-reader-notification-timeline ; categorized notifications
+M-x zhihu-reader-insert-uploaded-image ; upload a local image into Org
 M-x zhihu-reader-search-sort ; change search sort
 M-x zhihu-reader-open-zhihu-url ; route a Zhihu URL internally
 M-x zhihu-reader-read-url  ; EAF + Readability fallback

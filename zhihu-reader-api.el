@@ -380,6 +380,116 @@ Return a plist (:status :json :body)."
      "收藏")
     (message "已加入收藏夹")))
 
+(defun zhihu-reader--http-binary (method url data extra-headers)
+  "Send raw DATA to URL with EXTRA-HEADERS and return (STATUS . BODY)."
+  (let ((url-request-method (upcase method))
+        (url-request-extra-headers extra-headers)
+        (url-request-data data))
+    (with-current-buffer (url-retrieve-synchronously url t t 60)
+      (unwind-protect
+          (progn
+            (goto-char (point-min))
+            (let ((status url-http-response-status))
+              (goto-char url-http-end-of-headers)
+              (cons status (buffer-substring-no-properties (point) (point-max)))))
+        (kill-buffer (current-buffer))))))
+
+(defun zhihu-reader--hmac-sha1-base64 (key data)
+  "Return HMAC-SHA1(KEY, DATA) as base64, using openssl."
+  (let ((file (make-temp-file "zhihu-hmac-" nil ".bin")))
+    (unwind-protect
+        (progn
+          (with-temp-file file
+            (set-buffer-multibyte nil)
+            (insert data))
+          (with-temp-buffer
+            (set-buffer-multibyte nil)
+            (call-process "openssl" file t nil
+                          "dgst" "-sha1" "-hmac" key "-binary")
+            (base64-encode-string (buffer-string) t)))
+      (ignore-errors (delete-file file)))))
+
+(defun zhihu-reader--image-media-type (file)
+  (pcase (downcase (or (file-name-extension file) ""))
+    ("png" "image/png")
+    ("gif" "image/gif")
+    ("webp" "image/webp")
+    (_ "image/jpeg")))
+
+(defun zhihu-reader-upload-image (file &optional source)
+  "Upload local image FILE to Zhihu and return its remote URL.
+SOURCE defaults to \"article\".  This is a write operation."
+  (unless zhihu-reader-enable-write
+    (user-error "写操作已关闭；请设置 `zhihu-reader-enable-write' 为 t"))
+  (unless (file-readable-p file)
+    (user-error "图片不存在: %s" file))
+  (let* ((bytes (with-temp-buffer
+                  (set-buffer-multibyte nil)
+                  (insert-file-contents-literally file)
+                  (buffer-string)))
+         (hash (secure-hash 'md5 bytes nil nil nil))
+         (media (zhihu-reader--image-media-type file))
+         (resp (zhihu-reader--http-json
+                "POST" "https://api.zhihu.com/images"
+                (list :image_hash hash :source (or source "article")) nil))
+         (json (plist-get resp :json))
+         (status (plist-get resp :status)))
+    (unless (memq status '(200 201))
+      (error "图片申请失败 (HTTP %s): %s" status (plist-get resp :body)))
+    (let* ((upload-file (or (zhihu-reader--alist-get 'upload_file json) json))
+           (image-id (or (zhihu-reader--alist-get 'image_id upload-file)
+                         (zhihu-reader--alist-get 'id upload-file)))
+           (token (or (zhihu-reader--alist-get 'upload_token json)
+                      (zhihu-reader--alist-get 'token json))))
+      (unless image-id
+        (error "知乎没有返回 image_id: %s" (plist-get resp :body)))
+      (when token
+        (when (equal media "image/gif")
+          (error "暂不支持 GIF 分片上传；请使用 PNG/JPEG/WebP"))
+        (let* ((date (format-time-string "%a, %d %b %Y %H:%M:%S GMT" nil t))
+               (access-id (or (zhihu-reader--alist-get 'access_id token)
+                              (zhihu-reader--alist-get 'accessId token)))
+               (access-key (or (zhihu-reader--alist-get 'access_key token)
+                               (zhihu-reader--alist-get 'accessKey token)))
+               (access-token (or (zhihu-reader--alist-get 'access_token token)
+                                 (zhihu-reader--alist-get 'accessToken token)))
+               (resource (format "/zhihu-pics/v2-%s" hash))
+               (source (mapconcat #'identity
+                                   (list "PUT" "" media date
+                                         (format "x-oss-date:%s" date)
+                                         (format "x-oss-security-token:%s" access-token)
+                                         "x-oss-user-agent:aliyun-sdk-js/6.8.0 Chrome 99.0.4844.84 on Windows 10 64-bit"
+                                         resource)
+                                   "\n"))
+               (signature (zhihu-reader--hmac-sha1-base64 access-key source))
+               (put-resp (zhihu-reader--http-binary
+                          "PUT" (format "https://zhihu-pics-upload.zhimg.com/v2-%s" hash)
+                          bytes
+                          `(("Content-Type" . ,media)
+                            ("x-oss-date" . ,date)
+                            ("x-oss-user-agent" . "aliyun-sdk-js/6.8.0 Chrome 99.0.4844.84 on Windows 10 64-bit")
+                            ("x-oss-security-token" . ,access-token)
+                            ("Authorization" . ,(format "OSS %s:%s" access-id signature))))))
+          (unless (and (>= (car put-resp) 200) (< (car put-resp) 300))
+            (error "图片 OSS 上传失败 (HTTP %s): %s" (car put-resp) (cdr put-resp))))
+        (let* ((status-resp (zhihu-reader--http-json
+                             "PUT"
+                             (format "https://api.zhihu.com/images/%s/uploading_status" image-id)
+                             (list :upload_result "success") nil)))
+          (unless (memq (plist-get status-resp :status) '(200 201 202 204))
+            (error "图片上传状态提交失败 (HTTP %s)" (plist-get status-resp :status)))))
+      (let ((url nil))
+        (dotimes (_ 10)
+          (unless url
+            (let* ((r (zhihu-reader--http-json
+                       "GET" (format "https://api.zhihu.com/images/%s" image-id) nil nil))
+                   (j (plist-get r :json)))
+              (setq url (or (zhihu-reader--alist-get 'src j)
+                            (zhihu-reader--alist-get 'original_src j)
+                            (zhihu-reader--alist-get 'watermark_src j)))
+              (unless url (sleep-for 2)))))
+        (or url (error "图片处理超时: %s" image-id))))))
+
 (defun zhihu-reader--response-id (json)
   "Extract a content id from a publish response JSON."
   (let* ((data (zhihu-reader--alist-get 'data json))
