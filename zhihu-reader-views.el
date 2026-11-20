@@ -63,19 +63,29 @@
              (user-error "文章 ID 为空"))))
   (let* ((id (zhihu-reader--id-or-url id))
          (url (format "https://www.zhihu.com/api/v4/articles/%s?include=content,author,comment_count,voteup_count,title" id))
-         (resp (zhihu-reader--http-json "GET" url nil nil))
-         (json (plist-get resp :json))
-         (status (plist-get resp :status)))
-    (unless (memq status '(200 201))
-      (user-error "文章加载失败 (HTTP %s)" status))
-    (let* ((item (zhihu-reader--normalize
-                  (list (cons 'target json) (cons 'type "article"))))
-           (buffer (or buffer-name "*Zhihu Article*")))
-      (if item
-          (zhihu-reader--render
-           (format "文章 · %s" (or (plist-get item :title) id))
-           (list item) (list 'article id) buffer)
-        (user-error "文章没有可用内容")))))
+         (buffer (or buffer-name "*Zhihu Article*"))
+         (view (list 'article id)))
+    (if noninteractive
+        (let* ((resp (zhihu-reader--http-json "GET" url nil nil))
+               (json (plist-get resp :json)))
+          (unless (memq (plist-get resp :status) '(200 201))
+            (user-error "文章加载失败 (HTTP %s)" (plist-get resp :status)))
+          (let ((item (zhihu-reader--normalize
+                       (list (cons 'target json) (cons 'type "article")))))
+            (if item
+                (zhihu-reader--render
+                 (format "文章 · %s" (or (plist-get item :title) id))
+                 (list item) view buffer)
+              (user-error "文章没有可用内容"))))
+      (zhihu-reader--async-list
+       (format "文章 %s" id) view url buffer
+       (lambda (json)
+         (let ((item (zhihu-reader--normalize
+                      (list (cons 'target json) (cons 'type "article")))))
+           (unless item (error "文章没有可用内容"))
+           (cons (format "文章 · %s" (or (plist-get item :title) id))
+                 (list item))))
+       nil))))
 
 (defun zhihu-reader--zhihu-url-p (url)
   "Return non-nil when URL is a Zhihu/Zhuanlan URL."

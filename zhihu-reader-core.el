@@ -502,7 +502,28 @@ AFTER-RENDER is called with JSON after rendering."
          (zhihu-reader--show-load-error buffer error)))
      sign)))
 
-;;;; Normalization
+(defun zhihu-reader--async-custom (title view url buffer render-fn)
+  "Fetch URL asynchronously and call RENDER-FN with JSON in BUFFER.
+TITLE/VIEW initialize the loading buffer.  RENDER-FN must replace the
+loading contents; errors are shown in BUFFER."
+  (let* ((target (zhihu-reader--prepare-buffer title view buffer))
+         (generation (with-current-buffer target zhihu-reader--generation)))
+    (zhihu-reader--fetch-json-async
+     url
+     (lambda (json)
+       (when (and (zhihu-reader--generation-current-p target generation)
+                  (equal view
+                         (buffer-local-value 'zhihu-reader--view target)))
+         (condition-case err
+             (with-current-buffer target
+               (funcall render-fn json))
+           (error (zhihu-reader--show-load-error
+                   target (error-message-string err))))))
+     (lambda (error)
+       (when (zhihu-reader--generation-current-p target generation)
+         (zhihu-reader--show-load-error target error))))))
+
+;;; Normalization
 
 (defun zhihu-reader--alist-get (key alist)
   "Like `alist-get' but tolerate strings and nil."
