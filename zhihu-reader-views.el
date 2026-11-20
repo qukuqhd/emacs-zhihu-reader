@@ -127,11 +127,11 @@ BUFFER-NAME overrides the target buffer for search/article views."
        ((string-match "/p/\\([0-9]+\\)" path)
         (zhihu-reader-article (match-string 1 path)))
        ((string-match "/people/\\([^/?]+\\)" path)
-        (zhihu-reader-author (match-string 1 path)))
+        (zhihu-reader-author (match-string 1 path) nil "*Zhihu Author*"))
        ((string-match "/topic/\\([0-9]+\\)" path)
-        (zhihu-reader-topic (match-string 1 path)))
+        (zhihu-reader-topic (match-string 1 path) nil "*Zhihu Topic*"))
        ((string-match "/collection/\\([0-9]+\\)" path)
-        (zhihu-reader-collection (match-string 1 path)))
+        (zhihu-reader-collection (match-string 1 path) nil "*Zhihu Collection*"))
        ((string= path "/hot")
         (zhihu-reader-hot))
        ((or (string= path "/") (string-match-p "/follow" path))
@@ -362,8 +362,8 @@ CURSOR is an optional `moments_v3' paging URL."
                              (buffer-local-value 'zhihu-reader--view buffer)))
              (zhihu-reader--show-load-error buffer error))))))))
 
-(defun zhihu-reader-collection (id &optional page)
-  "Open collection ID."
+(defun zhihu-reader-collection (id &optional page buffer-name)
+  "Open collection ID in BUFFER-NAME."
   (interactive
    (list (or (read-string "知乎收藏夹 ID: ")
              (user-error "收藏夹 ID 为空"))
@@ -372,31 +372,31 @@ CURSOR is an optional `moments_v3' paging URL."
          (url (format "https://www.zhihu.com/api/v4/collections/%s/items?limit=20&offset=%d"
                       id (* 20 (1- page))))
          (title (format "收藏夹 %s · 第 %d 页" id page))
-         (key (list 'collection id page)))
+         (key (list 'collection id page buffer-name)))
     (if noninteractive
         (let* ((json (zhihu-reader--fetch-json url))
                (paging (zhihu-reader--alist-get 'paging json)))
           (zhihu-reader--render title
                                 (zhihu-reader--normalize-wrapped-items json)
-                                key)
-          (with-current-buffer (get-buffer zhihu-reader--main-buffer)
+                                key buffer-name)
+          (with-current-buffer (get-buffer (or buffer-name zhihu-reader--main-buffer))
             (setq-local zhihu-reader--collection-has-next
                         (and (zhihu-reader--alist-get 'next paging)
                              (not (eq (zhihu-reader--alist-get 'is_end paging) t))))))
       (zhihu-reader--async-list
-       title key url nil
+       title key url buffer-name
        (lambda (json)
          (cons title (zhihu-reader--normalize-wrapped-items json)))
        key nil
        (lambda (json)
          (let ((paging (zhihu-reader--alist-get 'paging json)))
-           (with-current-buffer (get-buffer zhihu-reader--main-buffer)
+           (with-current-buffer (get-buffer (or buffer-name zhihu-reader--main-buffer))
              (setq-local zhihu-reader--collection-has-next
                          (and (zhihu-reader--alist-get 'next paging)
                               (not (eq (zhihu-reader--alist-get 'is_end paging) t)))))))))))
 
-(defun zhihu-reader-topic (id &optional page)
-  "Open topic ID's hot feed."
+(defun zhihu-reader-topic (id &optional page buffer-name)
+  "Open topic ID's essence feed in BUFFER-NAME."
   (interactive
    (list (or (read-string "知乎话题 ID: ")
              (user-error "话题 ID 为空"))
@@ -405,15 +405,15 @@ CURSOR is an optional `moments_v3' paging URL."
          (url (format "https://www.zhihu.com/api/v5.1/topics/%s/feeds/essence?limit=20&offset=%d"
                       id (* 20 (1- page))))
          (title (format "话题 %s · 第 %d 页" id page))
-         (key (list 'topic id page)))
+         (key (list 'topic id page buffer-name)))
     (if noninteractive
         (zhihu-reader--render title
                               (zhihu-reader--normalize-items
                                (plist-get (zhihu-reader--http-json "GET" url nil t)
                                           :json))
-                              key)
+                              key buffer-name)
       (zhihu-reader--async-list
-       title key url nil
+       title key url buffer-name
        (lambda (json) (cons title (zhihu-reader--normalize-items json)))
        key t))))
 
@@ -535,8 +535,8 @@ With FORCE non-nil, bypass the page cache."
   (format "https://www.zhihu.com/api/v4/members/%s/answers?include=data%%5B*%%5D.content%%2Cexcerpt%%2Cauthor%%2Cquestion%%2Ccomment_count%%2Cvoteup_count&limit=20&offset=%d&order_by=created"
           token (* 20 (1- (or page 1)))))
 
-(defun zhihu-reader-author (token &optional page)
-  "Open author TOKEN's answer list."
+(defun zhihu-reader-author (token &optional page buffer-name)
+  "Open author TOKEN's answer list in BUFFER-NAME."
   (interactive
    (list (or (org-entry-get nil "ZHIHU-AUTHOR-TOKEN")
              (read-string "知乎作者 url_token: "))
@@ -544,14 +544,15 @@ With FORCE non-nil, bypass the page cache."
   (let* ((token (or token (read-string "知乎作者 url_token: ")))
          (page (or page 1))
          (url (zhihu-reader--author-url token page))
-         (title (format "作者 %s · 第 %d 页" token page)))
+         (title (format "作者 %s · 第 %d 页" token page))
+         (view (list 'author token page buffer-name)))
     (if noninteractive
         (zhihu-reader--render title
                               (zhihu-reader--normalize-items
                                (zhihu-reader--fetch-json url))
-                              (list 'author token page))
+                              view buffer-name)
       (zhihu-reader--async-list
-       title (list 'author token page) url nil
+       title view url buffer-name
        (lambda (json)
          (cons title (zhihu-reader--normalize-items json)))))))
 
@@ -621,7 +622,14 @@ dedicated buffer (used by internal link routing)."
     ('answer (zhihu-reader-answer (nth 1 zhihu-reader--view)))
     ('article (zhihu-reader-article (nth 1 zhihu-reader--view)))
     ('author (zhihu-reader-author (nth 1 zhihu-reader--view)
-                                  (nth 2 zhihu-reader--view)))
+                                  (nth 2 zhihu-reader--view)
+                                  (nth 3 zhihu-reader--view)))
+    ('collection (zhihu-reader-collection (nth 1 zhihu-reader--view)
+                                          (nth 2 zhihu-reader--view)
+                                          (nth 3 zhihu-reader--view)))
+    ('topic (zhihu-reader-topic (nth 1 zhihu-reader--view)
+                                (nth 2 zhihu-reader--view)
+                                (nth 3 zhihu-reader--view)))
     (_ (user-error "当前 buffer 没有可刷新的知乎视图"))))
 
 (defun zhihu-reader-sort ()
@@ -655,9 +663,11 @@ dedicated buffer (used by internal link routing)."
        (unless zhihu-reader--collection-has-next
          (user-error "已经是最后一页收藏夹"))
        (zhihu-reader-collection (nth 1 view)
-                                (1+ (or (nth 2 view) 1))))
+                                (1+ (or (nth 2 view) 1))
+                                (nth 3 view)))
       ('topic (zhihu-reader-topic (nth 1 view)
-                                  (1+ (or (nth 2 view) 1))))
+                                  (1+ (or (nth 2 view) 1))
+                                  (nth 3 view)))
       ('following
        (let ((next zhihu-reader--following-next))
          (unless (and next (not (string-empty-p next)))
@@ -680,9 +690,11 @@ dedicated buffer (used by internal link routing)."
                                          (max 1 (1- (or (nth 2 view) 1)))
                                          (nth 3 view)))
       ('collection (zhihu-reader-collection (nth 1 view)
-                                            (max 1 (1- (or (nth 2 view) 1)))))
+                                            (max 1 (1- (or (nth 2 view) 1)))
+                                            (nth 3 view)))
       ('topic (zhihu-reader-topic (nth 1 view)
-                                  (max 1 (1- (or (nth 2 view) 1)))))
+                                  (max 1 (1- (or (nth 2 view) 1)))
+                                  (nth 3 view)))
       ('following
        (let ((previous zhihu-reader--following-prev))
          (unless (and previous (not (string-empty-p previous)))
