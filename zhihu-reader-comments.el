@@ -99,6 +99,46 @@ not provide one (for example, a question with zero answers)."
               (setcar items (plist-put (car items) :question-images images)))
             items))))))
 
+(defun zhihu-reader--question-detail-async (id items view buffer)
+  "Fetch question detail for ID asynchronously and refresh BUFFER.
+ITEMS is the current answer list; VIEW is the question view."
+  (let ((url (format "https://www.zhihu.com/api/v4/questions/%s?include=detail" id)))
+    (zhihu-reader--fetch-json-async
+     url
+     (lambda (json)
+       (let* ((title (zhihu-reader--alist-get 'title json))
+              (html (or (zhihu-reader--alist-get 'detail json) ""))
+              (org (zhihu-reader--html-to-org html))
+              (images (zhihu-reader--extract-images html)))
+         (when (or (not (string-empty-p org)) title)
+           (let* ((items
+                   (if (null items)
+                       (list (list :kind "question" :id id :question-id id
+                                   :title (or title (format "问题 %s" id))
+                                   :content org :images images
+                                   :question-detail org :question-images images))
+                     (let ((first (car items)))
+                       (setcar items
+                               (plist-put
+                                (plist-put first :question-title
+                                           (or title (plist-get first :question-title)))
+                                :question-detail
+                                (if (string-empty-p org)
+                                    (plist-get first :question-detail)
+                                  org)))
+                       (when images
+                         (setcar items (plist-put (car items) :question-images images)))
+                       items)))
+                  (display-title (or (plist-get (car items) :question-title)
+                                     (format "问题 %s" id))))
+             (with-current-buffer buffer
+               (let ((origin (copy-marker (point))))
+                 (zhihu-reader--render
+                  (format "问题 · %s" display-title) items view buffer)
+                 (goto-char origin)))))))
+     (lambda (_error) nil)
+     t)))
+
 (defun zhihu-reader--id-or-url (value)
   "Extract a numeric Zhihu id from VALUE, which may be an id or URL."
   (cond
@@ -142,13 +182,18 @@ With FORCE non-nil, bypass the page cache."
         (zhihu-reader--async-list
          title key url zhihu-reader--question-buffer
          (lambda (json)
-           (let* ((items (zhihu-reader--ensure-question-detail
-                          (zhihu-reader--normalize-items json) id))
+           (let* ((items (zhihu-reader--normalize-items json))
                   (qtitle (or (plist-get (car items) :question-title)
                               (format "问题 %s" id))))
              (cons (format "问题 · %s · 第 %d 页 · %s" qtitle page order)
                    items)))
-         key)))))
+         key nil
+         (lambda (json)
+           (let* ((items (zhihu-reader--normalize-items json))
+                  (detail (and items (plist-get (car items) :question-detail))))
+             (when (or (null items) (string-empty-p (or detail "")))
+               (zhihu-reader--question-detail-async
+                id items key zhihu-reader--question-buffer)))))))))
 
 (defun zhihu-reader-answer (answer-id)
   "Open answer ANSWER-ID with its comments."
@@ -593,7 +638,9 @@ This is a write operation and cannot be undone."
                          (forward-line 1))
                        (point))))
           (let ((end (save-excursion
-                       (if (re-search-forward (format "^\\*\\{1,%d\\} " level) nil t)
+                       ;; The next heading, at any level, ends this comment's
+                       ;; own body (child replies start at a deeper level).
+                       (if (re-search-forward "^\\*+ " nil t)
                            (match-beginning 0)
                          (point-max)))))
             (string-trim (buffer-substring-no-properties start end))))))))
