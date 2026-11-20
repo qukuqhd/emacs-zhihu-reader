@@ -137,6 +137,14 @@ With FORCE non-nil, bypass the page cache."
                            (format "回答 %s" id))))
            (cons (format "回答 · %s" title) items)))))))
 
+(defcustom zhihu-reader-comments-separate-buffer nil
+  "When non-nil, \`c' opens comments and replies in a separate buffer."
+  :type 'boolean
+  :group 'zhihu-reader)
+
+(defvar-local zhihu-reader--comments-buffer nil
+  "Non-nil when the current buffer is a standalone comments buffer.")
+
 ;;;; Comments
 
 (defun zhihu-reader--normalize-comments (json)
@@ -471,10 +479,50 @@ child comments first (used by previous-page navigation)."
         (zhihu-reader--load-child-comments-async
          comment-id marker previous t t)))))
 
+(defun zhihu-reader--open-comments-buffer (target)
+  "Open TARGET comments or replies in a standalone Org buffer."
+  (let* ((root (nth 0 target))
+         (id (nth 1 target))
+         (kind (nth 2 target))
+         (comment-id (nth 4 target))
+         (root-id (if comment-id
+                      (or (org-entry-get nil "ZHIHU-COMMENTS" t)
+                          (org-entry-get nil "ZHIHU-COMMENT" t))
+                    id))
+         (title (if comment-id "知乎评论回复" "知乎评论"))
+         (buffer (get-buffer-create
+                  (if comment-id "*Zhihu Comment Replies*" "*Zhihu Comments*")))
+         marker)
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (zhihu-reader-mode)
+        (setq-local zhihu-reader--comments-buffer t)
+        (insert (format "#+TITLE: %s\n#+STARTUP: overview\n\n" title))
+        (if comment-id
+            (insert (format "* 评论\n:PROPERTIES:\n:ZHIHU-COMMENT: %s\n:ZHIHU-COMMENTS: %s\n:ZHIHU-COMMENTS-KIND: %s\n:END:\n"
+                            comment-id (or root-id id) kind))
+          (insert (format "* 评论\n:PROPERTIES:\n:ZHIHU-COMMENTS: %s\n:ZHIHU-COMMENTS-KIND: %s\n:END:\n"
+                          id kind)))
+        (goto-char (point-min))
+        (re-search-forward "^\\* " nil t)
+        (setq marker (copy-marker (match-beginning 0)))
+        (setq buffer-read-only t)
+        (if comment-id
+            (zhihu-reader--load-child-comments-async comment-id marker nil t)
+          (zhihu-reader--load-comments-async id marker kind nil t))))
+    (pop-to-buffer buffer)
+    (message "已在新 buffer 打开%s" (if comment-id "回复" "评论"))))
+
 (defun zhihu-reader-comments ()
-  "Load root or child comments at point."
+  "Load root or child comments at point.
+When `zhihu-reader-comments-separate-buffer' is non-nil and this is not
+already a standalone comments buffer, open them in a new buffer."
   (interactive)
-  (let ((comment-id (org-entry-get nil "ZHIHU-COMMENT"))
+  (if (and zhihu-reader-comments-separate-buffer
+           (not zhihu-reader--comments-buffer))
+      (zhihu-reader--open-comments-buffer (zhihu-reader--comment-target))
+    (let ((comment-id (org-entry-get nil "ZHIHU-COMMENT"))
         (id nil)
         (kind "answer")
         (root t))
@@ -522,7 +570,12 @@ child comments first (used by previous-page navigation)."
                 (zhihu-reader--hide-drawers)
                 (setq buffer-read-only t)))
           (message "子评论加载中…")
-          (zhihu-reader--load-child-comments-async comment-id marker nil t)))))))
+          (zhihu-reader--load-child-comments-async comment-id marker nil t))))))))
+
+(defun zhihu-reader-open-comments-buffer ()
+  "Always open comments/replies at point in a separate buffer."
+  (interactive)
+  (zhihu-reader--open-comments-buffer (zhihu-reader--comment-target)))
 
 (defvar-local zhihu-reader-compose-kind nil)
 (defvar-local zhihu-reader-compose-id nil)

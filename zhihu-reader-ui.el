@@ -153,6 +153,23 @@ ACTUAL is an optional loaded comment count."
   :type '(choice (const "score") (const "time"))
   :group 'zhihu-reader)
 
+(defcustom zhihu-reader-default-expand-questions t
+  "Whether question subtrees start expanded when a page is rendered."
+  :type 'boolean
+  :group 'zhihu-reader)
+
+(defcustom zhihu-reader-default-expand-answers t
+  "Whether answer bodies start expanded when a page is rendered."
+  :type 'boolean
+  :group 'zhihu-reader)
+
+(defcustom zhihu-reader-default-expand-comments nil
+  "Whether comments start expanded when loaded.
+The default is nil: questions and answers can be expanded while comments
+remain folded until you press `c' or `TAB' on a comment heading."
+  :type 'boolean
+  :group 'zhihu-reader)
+
 (defvar zhihu-reader--comments-inflight (make-hash-table :test #'equal))
 
 (defvar-local zhihu-reader--image-loading 0)
@@ -477,6 +494,35 @@ This keeps image links inserted after HTML content outside code blocks."
     (when (null order)
       (insert "没有返回内容。\n"))))
 
+(defun zhihu-reader--apply-default-folds ()
+  "Apply question/answer/comment expansion defaults to the current buffer."
+  (save-excursion
+    (goto-char (point-min))
+    (ignore-errors (org-overview))
+    (when (or zhihu-reader-default-expand-questions
+              zhihu-reader-default-expand-answers)
+      (ignore-errors (org-fold-show-all)))
+    (unless zhihu-reader-default-expand-answers
+      (org-map-entries
+       (lambda ()
+         (when (org-entry-get nil "ZHIHU-ANSWER")
+           (ignore-errors (org-fold-hide-subtree))))
+       nil 'file))
+    (unless zhihu-reader-default-expand-questions
+      (org-map-entries
+       (lambda ()
+         (when (and (org-entry-get nil "ZHIHU-QUESTION")
+                    (not (org-entry-get nil "ZHIHU-ANSWER")))
+           (ignore-errors (org-fold-hide-subtree))))
+       nil 'file))
+    (unless zhihu-reader-default-expand-comments
+      (org-map-entries
+       (lambda ()
+         (when (or (org-entry-get nil "ZHIHU-COMMENTS")
+                   (org-entry-get nil "ZHIHU-COMMENT"))
+           (ignore-errors (org-fold-hide-subtree))))
+       nil 'file))))
+
 (defun zhihu-reader--render (title items view &optional buffer-name)
   "Render ITEMS into an Org buffer.
 TITLE is the buffer title, VIEW is stored for refresh, BUFFER-NAME is
@@ -494,9 +540,7 @@ the target buffer."
         (insert (format "#+TITLE: %s\n#+STARTUP: overview\n\n" title))
         (zhihu-reader--render-items items)
         (goto-char (point-min))
-        (if (memq (car-safe view) '(question answer))
-            (ignore-errors (org-fold-show-all))
-          (org-overview))
+        (zhihu-reader--apply-default-folds)
         (ignore-errors (org-fold-hide-drawer-all))
         (zhihu-reader--hide-drawers)
         (setq buffer-read-only t)))
@@ -510,13 +554,12 @@ the target buffer."
       (with-current-buffer buffer
         (zhihu-reader--auto-load-comments)))
     (zhihu-reader--restore-navigation-anchor)
-    ;; A new list page must start folded.  Do this after restoring the
-    ;; navigation anchor so a previous page's global fold state cannot leak.
-    (unless (memq (car-safe view) '(question answer))
-      (with-current-buffer buffer
-        (setq-local org-cycle-global-status nil)
-        (ignore-errors (org-overview))
-        (setq-local org-cycle-global-status 'overview)))))
+    ;; Re-apply the configured defaults after restoring the anchor so a
+    ;; previous page's fold state cannot leak into this page.
+    (with-current-buffer buffer
+      (setq-local org-cycle-global-status nil)
+      (zhihu-reader--apply-default-folds)
+      (setq-local org-cycle-global-status 'overview))))
 
 (defun zhihu-reader--process-buffer-images (&optional beg end)
   "Download remote image links between BEG and END, and display local ones."
@@ -592,6 +635,7 @@ With prefix argument OFF, disable inline images instead."
   C-c o     切换评论排序（score / time）
   C-c l     点赞 / 取消点赞评论
   C-c c     发表评论或回复
+  C-c C-o   在新 buffer 打开评论/回复
 
 【内容操作】
   C-c v     赞同 / 取消赞同；C-u 反对
@@ -650,6 +694,7 @@ With prefix argument OFF, disable inline images instead."
     (define-key map (kbd "C-c m") #'zhihu-reader-mark-read)
     (define-key map (kbd "C-c u") #'zhihu-reader-mark-unread)
     (define-key map (kbd "C-c c") #'zhihu-reader-compose-comment)
+    (define-key map (kbd "C-c C-o") #'zhihu-reader-open-comments-buffer)
     (define-key map (kbd "C-c a") #'zhihu-reader-author)
     (define-key map (kbd "C-c n") #'zhihu-reader-new-answer)
     (define-key map (kbd "C-c N") #'zhihu-reader-new-article)
@@ -689,7 +734,28 @@ Limit to `zhihu-reader-auto-comments-limit' sections."
                  (puthash id t zhihu-reader--comments-inflight)
                  (setq count (1+ count))
                  (zhihu-reader--load-comments-async
-                  id (point-marker) kind nil t))))))))))
+                  id (point-marker) kind nil
+                  zhihu-reader-default-expand-comments))))))))))
+
+(defun zhihu-reader--isolate-current-subtree ()
+  "Collapse top-level questions that do not contain the current heading.
+This is a belt-and-braces defense against Org expanding sibling
+questions when a subtree is shown, even if global fold state leaked."
+  (let ((current (save-excursion
+                   (org-back-to-heading t)
+                   (point))))
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward "^\\* " nil t)
+        (let* ((heading (point))
+               (end (save-excursion
+                      (goto-char heading)
+                      (org-end-of-subtree t t)
+                      (point))))
+          (unless (and (<= heading current) (<= current end))
+            (ignore-errors
+              (goto-char heading)
+              (org-fold-hide-subtree))))))))
 
 (defun zhihu-reader--after-cycle (state &rest _)
   "Load comments and images after a visibility STATE change."
@@ -710,6 +776,7 @@ Limit to `zhihu-reader-auto-comments-limit' sections."
               (save-restriction
                 (ignore-errors (org-narrow-to-subtree))
                 (ignore-errors (org-fold-show-all)))
+              (zhihu-reader--isolate-current-subtree)
               (ignore-errors (force-window-update (current-buffer)))))
         (error nil)))))
 

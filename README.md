@@ -7,6 +7,56 @@ A Zhihu reader and writer for Emacs, modeled after:
 - `crispyChicken999/zhihu-fisher-vscode`: hot list, search, question/answer
   detail, comments and nested reading
 
+## Configuration
+
+Expansion defaults:
+
+```elisp
+(setq zhihu-reader-default-expand-questions t) ; 展开问题
+(setq zhihu-reader-default-expand-answers t)   ; 展开回答
+(setq zhihu-reader-default-expand-comments nil) ; 不自动展开评论
+```
+
+Comments in a separate buffer:
+
+```elisp
+(setq zhihu-reader-comments-separate-buffer t)
+```
+
+Then `c` on a comments heading opens `*Zhihu Comments*`; `c` on a
+comment opens `*Zhihu Comment Replies*`.  `C-c C-o` always opens the
+selected comments/replies in a separate buffer.
+
+### All user options
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `zhihu-reader-cookie-db` | EAF cookies DB | Legacy cookie source |
+| `zhihu-reader-cookie-file` | `~/.local/state/.../cookies` | Manual Cookie header file |
+| `zhihu-reader-cookie-function` | nil | Custom Cookie provider |
+| `zhihu-reader-login-browser` | `zen-browser` | Browser used by `zhihu-reader-login` |
+| `zhihu-reader-browser-cookie-files` | Zen/Firefox globs | Cookie DB search paths |
+| `zhihu-reader-user-agent` | browser UA | HTTP User-Agent |
+| `zhihu-reader-feed-url` | v3 recommend URL | Recommendation feed endpoint |
+| `zhihu-reader-hot-url` | hot list URL | Hot list endpoint |
+| `zhihu-reader-search-url` | v4 search URL | Search endpoint |
+| `zhihu-reader-max-excerpt` | 1200 | Excerpt truncation length |
+| `zhihu-reader-render-images` | t | Inline images |
+| `zhihu-reader-image-cache` | `~/.cache/.../images` | Image cache directory |
+| `zhihu-reader-image-width` | 500 | Inline image width |
+| `zhihu-reader-auto-comments` | t | Auto-load visible comments |
+| `zhihu-reader-auto-comments-limit` | 10 | Max auto-loaded comment sections |
+| `zhihu-reader-comment-order` | `score` | `score` or `time` |
+| `zhihu-reader-default-expand-questions` | t | Expand questions on render |
+| `zhihu-reader-default-expand-answers` | t | Expand answer bodies on render |
+| `zhihu-reader-default-expand-comments` | nil | Expand loaded comments |
+| `zhihu-reader-comments-separate-buffer` | nil | Open comments in a new buffer |
+| `zhihu-reader-enable-write` | nil | Enable all write operations |
+| `zhihu-reader-filter-seen` | t | Hide already shown recommendations |
+| `zhihu-reader-seen-file` | `~/.local/state/.../seen.eld` | Seen IDs |
+| `zhihu-reader-bookmarks-file` | `~/.local/state/.../bookmarks.eld` | Bookmarks |
+| `zhihu-reader-article-directory` | `~/org/zhihu/articles` | New article sources |
+
 ## Files
 
 The implementation is split into focused modules; `zhihu-reader.el` is the
