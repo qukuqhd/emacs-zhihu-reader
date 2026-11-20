@@ -136,7 +136,8 @@ ITEMS is the current answer list; VIEW is the question view."
              (with-current-buffer buffer
                (let ((origin (copy-marker (point))))
                  (zhihu-reader--render
-                  (format "问题 · %s" display-title) items view buffer)
+                  (format "问题 · %s" display-title) items view buffer
+                  (eq (window-buffer (selected-window)) buffer))
                  (goto-char origin)))))))
      (lambda (_error) nil)
      t)))

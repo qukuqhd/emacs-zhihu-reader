@@ -558,7 +558,7 @@ POSITION (default point), so later headings/images cannot be swallowed."
            (ignore-errors (org-fold-hide-subtree))))
        nil 'file))))
 
-(defun zhihu-reader--render (title items view &optional buffer-name)
+(defun zhihu-reader--render (title items view &optional buffer-name select)
   "Render ITEMS into an Org buffer.
 TITLE is the buffer title, VIEW is stored for refresh, BUFFER-NAME is
 the target buffer."
@@ -579,7 +579,9 @@ the target buffer."
         (ignore-errors (org-fold-hide-drawer-all))
         (zhihu-reader--hide-drawers)
         (setq buffer-read-only t)))
-    (pop-to-buffer buffer)
+    (if (or (null select) (eq (window-buffer (selected-window)) buffer))
+        (pop-to-buffer buffer)
+      (set-buffer buffer))
     (when (and zhihu-reader-render-images (display-graphic-p))
       (with-current-buffer buffer
         (if (memq (car-safe view) '(question answer article pin))
@@ -588,7 +590,8 @@ the target buffer."
     (when (memq (car-safe view) '(question answer article pin))
       (with-current-buffer buffer
         (zhihu-reader--auto-load-comments)))
-    (zhihu-reader--restore-navigation-anchor)
+    (when (or (null select) (eq (window-buffer (selected-window)) buffer))
+      (zhihu-reader--restore-navigation-anchor))
     ;; Re-apply the configured defaults after restoring the anchor so a
     ;; previous page's fold state cannot leak into this page.
     (with-current-buffer buffer

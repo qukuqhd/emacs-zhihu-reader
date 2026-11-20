@@ -527,9 +527,11 @@ AFTER-RENDER is called with JSON after rendering."
              (let ((result (funcall make-result json)))
                (when cache-key
                  (puthash cache-key result zhihu-reader--page-cache))
-               (zhihu-reader--render (car result) (cdr result) view buffer-name)
-               (when cache-key
-                 (zhihu-reader--restore-point cache-key))
+               (let ((select (eq (window-buffer (selected-window)) buffer)))
+                 (zhihu-reader--render
+                  (car result) (cdr result) view buffer-name select)
+                 (when (and cache-key select)
+                   (zhihu-reader--restore-point cache-key)))
                (when after-render
                  (funcall after-render json)))
            (error (zhihu-reader--show-load-error buffer (error-message-string err))))))
@@ -554,7 +556,13 @@ loading contents; errors are shown in BUFFER."
                          (buffer-local-value 'zhihu-reader--view target)))
          (condition-case err
              (with-current-buffer target
-               (funcall render-fn json))
+               (let ((zhihu-reader--ASYNC-SELECT
+                      (eq (window-buffer (selected-window)) target)))
+                 (cl-letf (((symbol-function 'pop-to-buffer)
+                            (lambda (buf &rest _)
+                              (when zhihu-reader--ASYNC-SELECT
+                                (select-window (display-buffer buf))))))
+                   (funcall render-fn json))))
            (error (zhihu-reader--show-load-error
                    target (error-message-string err))))))
      (lambda (error)
