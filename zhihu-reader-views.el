@@ -430,6 +430,47 @@ CURSOR is an optional `moments_v3' paging URL."
                          (and (zhihu-reader--alist-get 'next paging)
                               (not (eq (zhihu-reader--alist-get 'is_end paging) t)))))))))))
 
+(defun zhihu-reader--render-collections (json buffer token)
+  "Render collection list JSON in BUFFER."
+  (let ((data (append (or (zhihu-reader--alist-get 'data json) []) nil)))
+    (with-current-buffer (get-buffer-create buffer)
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (zhihu-reader-mode)
+        (setq-local zhihu-reader--view (list 'collections token))
+        (insert (format "#+TITLE: 收藏夹 · %s\n#+STARTUP: overview\n\n" token))
+        (dolist (collection data)
+          (let ((id (zhihu-reader--alist-get 'id collection))
+                (title (or (zhihu-reader--alist-get 'title collection) "收藏夹"))
+                (description (or (zhihu-reader--alist-get 'description collection) ""))
+                (count (or (zhihu-reader--alist-get 'answer_count collection)
+                           (zhihu-reader--alist-get 'item_count collection) 0)))
+            (insert (format "* %s\n  %s\n  %s 条\n\n"
+                            (org-link-make-string
+                             (format "https://www.zhihu.com/collection/%s" id)
+                             (zhihu-reader--safe-title title))
+                            (replace-regexp-in-string "[\r\n]+" " " description)
+                            count))))
+        (if (null data) (insert "没有收藏夹。\n"))
+        (goto-char (point-min))
+        (ignore-errors (org-overview))
+        (setq buffer-read-only t)))
+    (pop-to-buffer (get-buffer-create buffer))))
+
+(defun zhihu-reader-collections (token)
+  "List collections belonging to TOKEN."
+  (interactive (list (or (org-entry-get nil "ZHIHU-AUTHOR-TOKEN")
+                         (read-string "知乎用户 url_token: "))))
+  (let* ((token (or token (read-string "知乎用户 url_token: ")))
+         (buffer "*Zhihu Collections*")
+         (url (format "https://www.zhihu.com/api/v4/members/%s/favlists?limit=20&offset=0&include=data%%5B*%%5D.answer_count%%2Carticles_count%%2Cfollowers" token)))
+    (if noninteractive
+        (zhihu-reader--render-collections
+         (plist-get (zhihu-reader--http-json "GET" url nil nil) :json) buffer token)
+      (zhihu-reader--async-custom
+       "收藏夹" (list 'collections token) url buffer
+       (lambda (json) (zhihu-reader--render-collections json buffer token))))))
+
 (defun zhihu-reader-create-collection (title &optional description public)
   "Create a collection titled TITLE."
   (interactive (list (read-string "收藏夹标题: ")
@@ -470,6 +511,35 @@ CURSOR is an optional `moments_v3' paging URL."
                  (not (eq (zhihu-reader--alist-get 'success json) :json-false)))
       (error "删除收藏夹失败 (HTTP %s): %s" status (plist-get resp :body)))
     (message "收藏夹已删除")))
+
+(defun zhihu-reader-remove-from-collection ()
+  "Remove the answer/article at point from the current collection."
+  (interactive)
+  (unless zhihu-reader-enable-write
+    (user-error "写操作已关闭；请设置 `zhihu-reader-enable-write' 为 t"))
+  (let ((view zhihu-reader--view))
+    (unless (eq (car-safe view) 'collection)
+      (user-error "当前不是收藏夹视图"))
+    (let* ((collection (nth 1 view))
+           (target (zhihu-reader--content-target))
+           (type (if (equal (car target) "answers") "answer" "article"))
+           (id (cadr target)))
+      (unless (yes-or-no-p "确认从收藏夹移除当前内容？")
+        (user-error "已取消"))
+      (let* ((resp (zhihu-reader--http-form
+                    "PUT"
+                    (format "https://api.zhihu.com/collections/contents/%s/%s" type id)
+                    (list (cons "remove_collections" collection))))
+             (status (plist-get resp :status)))
+        (unless (memq status '(200 201 202 204))
+          (error "移除收藏失败 (HTTP %s): %s" status (plist-get resp :body)))
+        (save-excursion
+          (org-back-to-heading t)
+          (let ((beg (point))
+                (end (save-excursion (org-end-of-subtree t t) (point))))
+            (let ((inhibit-read-only t))
+              (delete-region beg end))))
+        (message "已从收藏夹移除")))))
 
 (defun zhihu-reader-topic (id &optional page buffer-name)
   "Open topic ID's essence feed in BUFFER-NAME."
@@ -1272,6 +1342,8 @@ dedicated buffer (used by internal link routing)."
      (zhihu-reader-user-pins (nth 1 zhihu-reader--view)
                              (nth 2 zhihu-reader--view)
                              (nth 3 zhihu-reader--view)))
+    ('collections
+     (zhihu-reader-collections (nth 1 zhihu-reader--view)))
     ('user-relations
      (zhihu-reader--user-relations (nth 1 zhihu-reader--view)
                                    (nth 2 zhihu-reader--view)

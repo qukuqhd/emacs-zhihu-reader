@@ -715,6 +715,7 @@ Non-Zhihu URLs keep the EAF/Readability fallback."
   C-c c     发表评论或回复
   C-c C-o   在新 buffer 打开评论/回复
   C-c C-r   通知全部标为已读
+  C-c C-d   从当前收藏夹移除
 
 【内容操作】
   C-c v     赞同 / 取消赞同；C-u 反对
@@ -783,6 +784,7 @@ Non-Zhihu URLs keep the EAF/Readability fallback."
     (define-key map (kbd "C-c c") #'zhihu-reader-compose-comment)
     (define-key map (kbd "C-c C-o") #'zhihu-reader-open-comments-buffer)
     (define-key map (kbd "C-c C-r") #'zhihu-reader-notifications-readall)
+    (define-key map (kbd "C-c C-d") #'zhihu-reader-remove-from-collection)
     (define-key map (kbd "C-c +") #'zhihu-reader-zoom-in)
     (define-key map (kbd "C-c -") #'zhihu-reader-zoom-out)
     (define-key map (kbd "C-c 0") #'zhihu-reader-zoom-reset)

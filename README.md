@@ -223,6 +223,7 @@ M-x zhihu-reader-user-followers ; followers list
 M-x zhihu-reader-user-followees ; following-users list
 M-x zhihu-reader-user-articles ; user articles
 M-x zhihu-reader-user-pins ; user pins
+M-x zhihu-reader-collections ; list user's collections
 M-x zhihu-reader-create-collection ; create collection
 M-x zhihu-reader-delete-collection ; delete collection
 M-x zhihu-reader-notification-timeline ; categorized notifications
@@ -279,6 +280,7 @@ C-c b   bookmark
 C-c B   bookmark list
 C-c m/u mark read/unread
 C-c C-h reading history
+C-c C-d remove from current collection
 C-c C-l add to read later
 C-c C-L read later list
 C-c +/-/0 zoom
