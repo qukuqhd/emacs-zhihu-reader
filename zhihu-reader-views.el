@@ -176,6 +176,21 @@ BUFFER-NAME overrides the target buffer for search/article views."
         (zhihu-reader-following))
        (t (zhihu-reader-read-url url))))))
 
+(defun zhihu-reader-open-author ()
+  "Open the Zhihu profile of the author at point."
+  (interactive)
+  (let ((token (or (org-entry-get nil "ZHIHU-AUTHOR-TOKEN" t)
+                   (org-entry-get nil "ZHIHU-AUTHOR-TOKEN"))))
+    (unless token
+      (user-error "当前内容没有作者信息"))
+    (zhihu-reader-user token "*Zhihu User*")))
+
+(defun zhihu-reader-open-comment ()
+  "Open the comment/reply detail at point in a separate buffer."
+  (interactive)
+  (let ((target (zhihu-reader--comment-target)))
+    (zhihu-reader--open-comments-buffer target)))
+
 (defun zhihu-reader-open-at-point ()
   "Enter the question/answer at point, or open its link."
   (interactive)
@@ -188,6 +203,9 @@ BUFFER-NAME overrides the target buffer for search/article views."
      (a (zhihu-reader-answer a))
      (q (zhihu-reader-question q))
      (article (zhihu-reader-article article))
+     ((or (org-entry-get nil "ZHIHU-COMMENT")
+          (org-entry-get nil "ZHIHU-COMMENTS"))
+      (zhihu-reader-open-comment))
      (t (org-open-at-point)))))
 
 (defun zhihu-reader--share-title ()

@@ -743,7 +743,8 @@ Non-Zhihu URLs keep the EAF/Readability fallback."
   C-c B     打开书签列表
   C-c m     标记已读
   C-c u     标记未读
-  C-c a     查看作者主页
+  C-c a     查看作者资料
+  C-c A     查看作者回答列表
   e         编辑回答或评论
 
 【分享与阅读】
@@ -809,7 +810,8 @@ Non-Zhihu URLs keep the EAF/Readability fallback."
     (define-key map (kbd "C-c C-h") #'zhihu-reader-history)
     (define-key map (kbd "C-c C-l") #'zhihu-reader-read-later)
     (define-key map (kbd "C-c C-L") #'zhihu-reader-later-list)
-    (define-key map (kbd "C-c a") #'zhihu-reader-author)
+    (define-key map (kbd "C-c a") #'zhihu-reader-open-author)
+    (define-key map (kbd "C-c A") #'zhihu-reader-author)
     (define-key map (kbd "C-c n") #'zhihu-reader-new-answer)
     (define-key map (kbd "C-c N") #'zhihu-reader-new-article)
     (define-key map (kbd "C-c s") #'zhihu-reader-save-draft)
