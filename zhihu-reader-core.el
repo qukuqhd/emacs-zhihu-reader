@@ -125,6 +125,14 @@ Written by `zhihu-reader-set-cookie' with mode 0600."
   :type 'string
   :group 'zhihu-reader)
 
+(defcustom zhihu-reader-search-sort nil
+  "Optional search sort, e.g. \"upvoted_count\" or \"created_time\"."
+  :type '(choice (const :tag "Default" nil)
+                 (const "upvoted_count")
+                 (const "created_time")
+                 string)
+  :group 'zhihu-reader)
+
 (defcustom zhihu-reader-user-agent
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36"
   "User-Agent used for Zhihu requests."

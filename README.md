@@ -40,6 +40,7 @@ selected comments/replies in a separate buffer.
 | `zhihu-reader-feed-url` | v3 recommend URL | Recommendation feed endpoint |
 | `zhihu-reader-hot-url` | hot list URL | Hot list endpoint |
 | `zhihu-reader-search-url` | v4 search URL | Search endpoint |
+| `zhihu-reader-search-sort` | nil | Optional search sort |
 | `zhihu-reader-max-excerpt` | 1200 | Excerpt truncation length |
 | `zhihu-reader-render-images` | t | Inline images |
 | `zhihu-reader-image-cache` | `~/.cache/.../images` | Image cache directory |
@@ -209,6 +210,12 @@ M-x zhihu-reader-user      ; user profile
 M-x zhihu-reader-notifications ; notifications
 M-x zhihu-reader-user-followers ; followers list
 M-x zhihu-reader-user-followees ; following-users list
+M-x zhihu-reader-user-articles ; user articles
+M-x zhihu-reader-user-pins ; user pins
+M-x zhihu-reader-create-collection ; create collection
+M-x zhihu-reader-delete-collection ; delete collection
+M-x zhihu-reader-notification-timeline ; categorized notifications
+M-x zhihu-reader-search-sort ; change search sort
 M-x zhihu-reader-open-zhihu-url ; route a Zhihu URL internally
 M-x zhihu-reader-read-url  ; EAF + Readability fallback
 M-x zhihu-reader-edit-at-point ; edit answer/comment in an Org buffer
@@ -248,6 +255,7 @@ C-c [   previous comments page (cursor)
 C-c o   comment sort order
 C-c l   like/unlike comment
 C-c d   delete comment
+C-c C-r mark notifications read
 C-c v   upvote/downvote
 C-c f   follow/unfollow
 C-c t   thank answer
