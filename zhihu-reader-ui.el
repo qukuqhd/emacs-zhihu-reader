@@ -302,6 +302,7 @@ be non-nil; vanilla `org-display-inline-images' only renders bare links."
       (when (file-exists-p file) (ignore-errors (delete-file file)))
       (let ((url-request-extra-headers
              `(("User-Agent" . ,zhihu-reader-user-agent)
+               ("Cookie" . ,(condition-case nil (zhihu-reader--cookies) (error "")))
                ("Referer" . "https://www.zhihu.com/")
                ("Accept" . "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"))))
         (zhihu-reader--image-start-loading)
@@ -730,7 +731,6 @@ Non-Zhihu URLs keep the EAF/Readability fallback."
   C-c C-o   在新 buffer 打开评论/回复
   C-c C-r   通知全部标为已读
   C-c C-d   从当前收藏夹移除
-  C-c C-f   关注/取消关注收藏夹
   C-c I     私信
   C-c C-c   在私信 buffer 发送消息
 
@@ -802,7 +802,6 @@ Non-Zhihu URLs keep the EAF/Readability fallback."
     (define-key map (kbd "C-c C-o") #'zhihu-reader-open-comments-buffer)
     (define-key map (kbd "C-c C-r") #'zhihu-reader-notifications-readall)
     (define-key map (kbd "C-c C-d") #'zhihu-reader-remove-from-collection)
-    (define-key map (kbd "C-c C-f") #'zhihu-reader-follow-collection)
     (define-key map (kbd "C-c C-c") #'zhihu-reader-chat-send)
     (define-key map (kbd "C-c +") #'zhihu-reader-zoom-in)
     (define-key map (kbd "C-c -") #'zhihu-reader-zoom-out)
@@ -898,12 +897,21 @@ questions when a subtree is shown, even if global fold state leaked."
               (ignore-errors (force-window-update (current-buffer)))))
         (error nil)))))
 
+(defun zhihu-reader--mode-line-unread ()
+  "Return a mode-line unread badge when available."
+  (when (> zhihu-reader--unread-total 0)
+    (propertize (format " [知乎 %d]" zhihu-reader--unread-total)
+                'face 'warning)))
+
 (define-derived-mode zhihu-reader-mode org-mode "Zhihu"
   "Major mode for Zhihu reader buffers."
   (setq-local org-startup-folded 'overview)
   (setq-local truncate-lines nil)
   (setq-local org-display-remote-inline-images 'skip)
-  (add-hook 'org-cycle-hook #'zhihu-reader--after-cycle nil t))
+  (add-hook 'org-cycle-hook #'zhihu-reader--after-cycle nil t)
+  (setq-local mode-line-misc-info
+              (cons '(:eval (zhihu-reader--mode-line-unread))
+                    mode-line-misc-info)))
 
 (provide 'zhihu-reader-ui)
 ;;; zhihu-reader-ui.el ends here

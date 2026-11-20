@@ -385,7 +385,7 @@ Return a plist (:status :json :body)."
   (let ((url-request-method (upcase method))
         (url-request-extra-headers extra-headers)
         (url-request-data (if (multibyte-string-p data)
-                              (string-make-unibyte data)
+                              (string-to-unibyte data)
                             data)))
     (with-current-buffer (url-retrieve-synchronously url t t 60)
       (unwind-protect

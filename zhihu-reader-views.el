@@ -462,6 +462,7 @@ CURSOR is an optional `moments_v3' paging URL."
     (let* ((data (append (or (zhihu-reader--alist-get 'data json) []) nil))
            (unread (or (zhihu-reader--alist-get 'new_count json) 0))
            (paging (zhihu-reader--alist-get 'paging json)))
+      (setq zhihu-reader--unread-total unread)
       (with-current-buffer (get-buffer-create buffer)
         (let ((inhibit-read-only t))
           (erase-buffer)
@@ -497,6 +498,17 @@ CURSOR is an optional `moments_v3' paging URL."
           (setq buffer-read-only t))
         (pop-to-buffer (get-buffer buffer))))))
 
+(defun zhihu-reader--chat-image-url (message)
+  "Return an image URL for a chat MESSAGE, including private message id."
+  (let* ((image (zhihu-reader--alist-get 'image message))
+         (url (and image (zhihu-reader--alist-get 'url image)))
+         (id (zhihu-reader--alist-get 'id message)))
+    (when (and url id (string-match-p "pic-private\.zhihu\.com" url)
+               (not (string-match-p "message_id=" url)))
+      (setq url (concat url (if (string-match-p "?" url) "&" "?")
+                        "message_id=" (url-hexify-string id))))
+    url))
+
 (defun zhihu-reader-chat (peer-id)
   "Open private conversation with PEER-ID."
   (interactive "s知乎用户 _id: ")
@@ -518,23 +530,31 @@ CURSOR is an optional `moments_v3' paging URL."
                     (format " 知乎私信  | C-c C-c 发送  g 刷新  q 关闭"))
         (insert "#+TITLE: 知乎私信\n#+STARTUP: overview\n\n")
         (dolist (message (reverse messages))
-          (let* ((text (or (zhihu-reader--alist-get 'text message) ""))
-                 (content (if (equal (zhihu-reader--alist-get 'content_type message) 1)
-                              "[图片]"
-                            (zhihu-reader--html-to-org text)))
+          (let* ((ct (zhihu-reader--alist-get 'content_type message))
+                 (text (or (zhihu-reader--alist-get 'text message) ""))
+                 (image (and (equal ct 1) (zhihu-reader--chat-image-url message)))
+                 (images (delq nil (append (and image (list image))
+                                           (and (not (equal ct 1))
+                                                (zhihu-reader--extract-images text)))))
+                 (content (if (equal ct 1) "" (zhihu-reader--html-to-org text)))
                  (sent (equal (zhihu-reader--alist-get 'user_type message) "sender"))
                  (sender (if sent "我" "对方"))
                  (time (zhihu-reader--alist-get 'created_time message)))
-            (insert (format "* %s%s\n%s\n\n"
+            (insert (format "* %s%s\n"
                             sender
                             (if time
                                 (concat " · " (format-time-string
                                                "%Y-%m-%d %H:%M"
                                                (seconds-to-time time)))
-                              "")
-                            content))))
+                              "")))
+            (when (not (string-empty-p content)) (insert content "\n"))
+            (when images
+              (zhihu-reader--insert-images images))
+            (insert "\n")))
         (if (null messages) (insert "还没有消息。\n"))
         (goto-char (point-min))
+        (when (and zhihu-reader-render-images (display-graphic-p))
+          (zhihu-reader--process-buffer-images))
         (ignore-errors (org-overview))
         (setq buffer-read-only t))
       (pop-to-buffer (get-buffer buffer)))))
@@ -1150,6 +1170,9 @@ With FORCE non-nil, bypass the page cache."
     (let* ((paging (zhihu-reader--alist-get 'paging json))
            (data (append (or (zhihu-reader--alist-get 'data json) []) nil))
            (unread (zhihu-reader--alist-get 'unread json)))
+      (setq zhihu-reader--unread-total
+            (or (zhihu-reader--alist-get 'count (zhihu-reader--alist-get 'message unread))
+                zhihu-reader--unread-total))
       (with-current-buffer (get-buffer-create buffer)
         (let ((inhibit-read-only t))
           (erase-buffer)
@@ -1864,22 +1887,6 @@ dedicated buffer (used by internal link routing)."
 (advice-add 'zhihu-reader-user-pins :around #'zhihu-reader--asyncify-user-pins)
 (advice-add 'zhihu-reader-search-people :around #'zhihu-reader--asyncify-search-people)
 (advice-add 'zhihu-reader-search-topics :around #'zhihu-reader--asyncify-search-topics)
-
-(defun zhihu-reader-follow-collection (&optional following)
-  "Follow or unfollow the collection in the current view."
-  (interactive (list (y-or-n-p "关注这个收藏夹？")))
-  (unless zhihu-reader-enable-write
-    (user-error "写操作已关闭；请设置 `zhihu-reader-enable-write' 为 t"))
-  (let ((view zhihu-reader--view))
-    (unless (eq (car-safe view) 'collection)
-      (user-error "当前不是收藏夹视图"))
-    (let* ((id (nth 1 view))
-           (url (format "https://www.zhihu.com/api/v4/collections/%s/followers" id))
-           (resp (zhihu-reader--http-json (if following "POST" "DELETE") url nil nil))
-           (status (plist-get resp :status)))
-      (unless (memq status '(200 201 202 204))
-        (error "收藏夹关注操作失败 (HTTP %s): %s" status (plist-get resp :body)))
-      (message (if following "已关注收藏夹" "已取消关注收藏夹")))))
 
 (defun zhihu-reader-export-org (file)
   "Export the current Zhihu buffer as an Org file FILE."

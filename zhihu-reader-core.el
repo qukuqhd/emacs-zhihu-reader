@@ -128,6 +128,9 @@ Written by `zhihu-reader-set-cookie' with mode 0600."
   :type 'boolean
   :group 'zhihu-reader)
 
+(defvar zhihu-reader--unread-total 0
+  "Last known total of unread Zhihu notifications/messages.")
+
 (defvar zhihu-reader--seen (make-hash-table :test #'equal))
 (defvar zhihu-reader--seen-loaded nil)
 

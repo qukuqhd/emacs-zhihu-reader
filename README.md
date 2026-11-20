@@ -230,7 +230,6 @@ M-x zhihu-reader-column ; column articles
 M-x zhihu-reader-user-articles ; user articles
 M-x zhihu-reader-user-pins ; user pins
 M-x zhihu-reader-collections ; list user's collections
-M-x zhihu-reader-follow-collection ; follow/unfollow collection
 M-x zhihu-reader-export-org ; export Org
 M-x zhihu-reader-export-html ; export HTML
 M-x zhihu-reader-export-markdown ; export Markdown
