@@ -153,12 +153,12 @@ ACTUAL is an optional loaded comment count."
   :type '(choice (const "score") (const "time"))
   :group 'zhihu-reader)
 
-(defcustom zhihu-reader-default-expand-questions t
+(defcustom zhihu-reader-default-expand-questions nil
   "Whether question subtrees start expanded when a page is rendered."
   :type 'boolean
   :group 'zhihu-reader)
 
-(defcustom zhihu-reader-default-expand-answers t
+(defcustom zhihu-reader-default-expand-answers nil
   "Whether answer bodies start expanded when a page is rendered."
   :type 'boolean
   :group 'zhihu-reader)

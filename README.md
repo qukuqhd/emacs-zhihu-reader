@@ -12,8 +12,8 @@ A Zhihu reader and writer for Emacs, modeled after:
 Expansion defaults:
 
 ```elisp
-(setq zhihu-reader-default-expand-questions t) ; 展开问题
-(setq zhihu-reader-default-expand-answers t)   ; 展开回答
+(setq zhihu-reader-default-expand-questions nil) ; 默认折叠问题
+(setq zhihu-reader-default-expand-answers nil)   ; 默认折叠回答
 (setq zhihu-reader-default-expand-comments nil) ; 不自动展开评论
 ```
 
@@ -47,8 +47,8 @@ selected comments/replies in a separate buffer.
 | `zhihu-reader-auto-comments` | t | Auto-load visible comments |
 | `zhihu-reader-auto-comments-limit` | 10 | Max auto-loaded comment sections |
 | `zhihu-reader-comment-order` | `score` | `score` or `time` |
-| `zhihu-reader-default-expand-questions` | t | Expand questions on render |
-| `zhihu-reader-default-expand-answers` | t | Expand answer bodies on render |
+| `zhihu-reader-default-expand-questions` | nil | Expand questions on render |
+| `zhihu-reader-default-expand-answers` | nil | Expand answer bodies on render |
 | `zhihu-reader-default-expand-comments` | nil | Expand loaded comments |
 | `zhihu-reader-comments-separate-buffer` | nil | Open comments in a new buffer |
 | `zhihu-reader-enable-write` | nil | Enable all write operations |
