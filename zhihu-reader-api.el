@@ -384,7 +384,9 @@ Return a plist (:status :json :body)."
   "Send raw DATA to URL with EXTRA-HEADERS and return (STATUS . BODY)."
   (let ((url-request-method (upcase method))
         (url-request-extra-headers extra-headers)
-        (url-request-data data))
+        (url-request-data (if (multibyte-string-p data)
+                              (string-make-unibyte data)
+                            data)))
     (with-current-buffer (url-retrieve-synchronously url t t 60)
       (unwind-protect
           (progn
@@ -446,7 +448,8 @@ SOURCE defaults to \"article\".  This is a write operation."
       (when token
         (when (equal media "image/gif")
           (error "暂不支持 GIF 分片上传；请使用 PNG/JPEG/WebP"))
-        (let* ((date (format-time-string "%a, %d %b %Y %H:%M:%S GMT" nil t))
+        (let* ((date (let ((system-time-locale "C"))
+                       (format-time-string "%a, %d %b %Y %H:%M:%S GMT" nil t)))
                (access-id (or (zhihu-reader--alist-get 'access_id token)
                               (zhihu-reader--alist-get 'accessId token)))
                (access-key (or (zhihu-reader--alist-get 'access_key token)
