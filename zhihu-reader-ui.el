@@ -580,7 +580,26 @@ the target buffer."
     (with-current-buffer buffer
       (setq-local org-cycle-global-status nil)
       (zhihu-reader--apply-default-folds)
-      (setq-local org-cycle-global-status 'overview))))
+      (setq-local org-cycle-global-status 'overview))
+    (when (and items (fboundp 'zhihu-reader--record-history))
+      (let* ((kind (car-safe view))
+             (id (nth 1 view))
+             (first (car items))
+             (title (or (plist-get first :question-title)
+                        (plist-get first :title))))
+        (pcase kind
+          ('question
+           (zhihu-reader--record-history
+            "question" id title
+            (format "https://www.zhihu.com/question/%s" id)))
+          ('answer
+           (zhihu-reader--record-history
+            "answer" id title
+            (format "https://www.zhihu.com/answer/%s" id)))
+          ('article
+           (zhihu-reader--record-history
+            "article" id title
+            (format "https://zhuanlan.zhihu.com/p/%s" id))))))))
 
 (defun zhihu-reader--process-buffer-images (&optional beg end)
   "Download remote image links between BEG and END, and display local ones."
@@ -601,6 +620,39 @@ the target buffer."
     (when (display-graphic-p)
       (zhihu-reader--queue-image-display))
     count))
+
+(defvar-local zhihu-reader--zoom-level 0)
+
+(defun zhihu-reader--apply-zoom ()
+  "Apply text and image zoom for the current Zhihu buffer."
+  (text-scale-set zhihu-reader--zoom-level)
+  (when (and zhihu-reader-render-images (display-graphic-p))
+    (setq-local org-image-actual-width
+                (list (round (* zhihu-reader-image-width
+                                (expt 1.15 zhihu-reader--zoom-level)))))
+    (ignore-errors (org-display-inline-images t t))
+    (ignore-errors (force-window-update (current-buffer)))))
+
+(defun zhihu-reader-zoom-in ()
+  "Zoom in text and inline images."
+  (interactive)
+  (setq zhihu-reader--zoom-level (1+ zhihu-reader--zoom-level))
+  (zhihu-reader--apply-zoom)
+  (message "缩放: %d" zhihu-reader--zoom-level))
+
+(defun zhihu-reader-zoom-out ()
+  "Zoom out text and inline images."
+  (interactive)
+  (setq zhihu-reader--zoom-level (1- zhihu-reader--zoom-level))
+  (zhihu-reader--apply-zoom)
+  (message "缩放: %d" zhihu-reader--zoom-level))
+
+(defun zhihu-reader-zoom-reset ()
+  "Reset text and image zoom."
+  (interactive)
+  (setq zhihu-reader--zoom-level 0)
+  (zhihu-reader--apply-zoom)
+  (message "缩放已重置"))
 
 (defun zhihu-reader-clear-image-cache ()
   "Delete all cached Zhihu images."
@@ -681,6 +733,12 @@ Non-Zhihu URLs keep the EAF/Readability fallback."
   C-c w     复制分享链接
   o         在 Emacs 内打开当前知乎链接
   i         切换内联图片
+  C-c +     放大文字和图片
+  C-c -     缩小文字和图片
+  C-c 0     重置缩放
+  C-c C-h   阅读历史
+  C-c C-l   加入稍后读
+  C-c C-L   打开稍后读
 
 【入口】
   r         推荐流
@@ -725,6 +783,12 @@ Non-Zhihu URLs keep the EAF/Readability fallback."
     (define-key map (kbd "C-c c") #'zhihu-reader-compose-comment)
     (define-key map (kbd "C-c C-o") #'zhihu-reader-open-comments-buffer)
     (define-key map (kbd "C-c C-r") #'zhihu-reader-notifications-readall)
+    (define-key map (kbd "C-c +") #'zhihu-reader-zoom-in)
+    (define-key map (kbd "C-c -") #'zhihu-reader-zoom-out)
+    (define-key map (kbd "C-c 0") #'zhihu-reader-zoom-reset)
+    (define-key map (kbd "C-c C-h") #'zhihu-reader-history)
+    (define-key map (kbd "C-c C-l") #'zhihu-reader-read-later)
+    (define-key map (kbd "C-c C-L") #'zhihu-reader-later-list)
     (define-key map (kbd "C-c a") #'zhihu-reader-author)
     (define-key map (kbd "C-c n") #'zhihu-reader-new-answer)
     (define-key map (kbd "C-c N") #'zhihu-reader-new-article)

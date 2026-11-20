@@ -93,6 +93,18 @@ Written by `zhihu-reader-set-cookie' with mode 0600."
   :type 'file
   :group 'zhihu-reader)
 
+(defcustom zhihu-reader-history-file
+  (expand-file-name "~/.local/state/zhihu-reader/history.eld")
+  "File used to persist reading history."
+  :type 'file
+  :group 'zhihu-reader)
+
+(defcustom zhihu-reader-later-file
+  (expand-file-name "~/.local/state/zhihu-reader/later.eld")
+  "File used to persist read-later entries."
+  :type 'file
+  :group 'zhihu-reader)
+
 (defcustom zhihu-reader-seen-file
   (expand-file-name "~/.local/state/zhihu-reader/seen.eld")
   "File used to persist recommendation IDs that have been shown."

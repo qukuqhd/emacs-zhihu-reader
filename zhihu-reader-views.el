@@ -576,6 +576,107 @@ CURSOR is an optional `moments_v3' paging URL."
     (zhihu-reader--save-seen)
     (message "已标记为未读")))
 
+(defun zhihu-reader--load-entry-file (file)
+  "Load a plist list from FILE."
+  (if (file-readable-p file)
+      (condition-case nil
+          (with-temp-buffer
+            (insert-file-contents file)
+            (read (current-buffer)))
+        (error nil))
+    nil))
+
+(defun zhihu-reader--save-entry-file (file entries)
+  "Persist ENTRIES to FILE."
+  (make-directory (file-name-directory file) t)
+  (with-temp-file file
+    (prin1 entries (current-buffer))))
+
+(defun zhihu-reader--record-history (kind id title url)
+  "Record a read item in the history."
+  (when (and url (not (string-empty-p url)))
+    (let* ((file zhihu-reader-history-file)
+           (entries (zhihu-reader--load-entry-file file))
+           (entry (list :kind kind :id id :title (or title "")
+                        :url url :time (float-time)))
+           (entries (cons entry
+                          (seq-remove (lambda (item)
+                                        (equal (plist-get item :url) url))
+                                      entries))))
+      (setq entries (seq-take entries 300))
+      (zhihu-reader--save-entry-file file entries))))
+
+(defun zhihu-reader--render-link-list (title entries view buffer)
+  "Render ENTRIES as a simple Org link list in BUFFER."
+  (with-current-buffer (get-buffer-create buffer)
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (zhihu-reader-mode)
+      (setq-local zhihu-reader--view view)
+      (setq-local header-line-format
+                  (format " %s  | RET 打开  g 刷新  q 关闭" title))
+      (insert (format "#+TITLE: %s\n#+STARTUP: overview\n\n" title))
+      (dolist (entry entries)
+        (let ((url (plist-get entry :url))
+              (name (or (plist-get entry :title) url))
+              (time (plist-get entry :time)))
+          (insert (format "* %s\n  %s\n"
+                          (org-link-make-string url (zhihu-reader--safe-title (format "%s" name)))
+                          (if time
+                              (format-time-string "%Y-%m-%d %H:%M"
+                                                  (seconds-to-time time))
+                            "")))
+          (insert "\n")))
+      (if (null entries) (insert "没有记录。\n"))
+      (goto-char (point-min))
+      (ignore-errors (org-overview))
+      (setq buffer-read-only t))
+    (pop-to-buffer (get-buffer buffer))))
+
+(defun zhihu-reader-history ()
+  "Open reading history."
+  (interactive)
+  (zhihu-reader--render-link-list
+   "知乎阅读历史" (zhihu-reader--load-entry-file zhihu-reader-history-file)
+   '(history) "*Zhihu History*"))
+
+(defun zhihu-reader-clear-history ()
+  "Clear reading history."
+  (interactive)
+  (when (yes-or-no-p "清空阅读历史？")
+    (zhihu-reader--save-entry-file zhihu-reader-history-file nil)
+    (message "阅读历史已清空")))
+
+(defun zhihu-reader-read-later ()
+  "Add the current content to read later."
+  (interactive)
+  (let* ((url (zhihu-reader--current-url))
+         (title (zhihu-reader--share-title))
+         (entries (zhihu-reader--load-entry-file zhihu-reader-later-file))
+         (entry (list :title (or title url) :url url :time (float-time)))
+         (entries (cons entry
+                        (seq-remove (lambda (item)
+                                      (equal (plist-get item :url) url))
+                                    entries))))
+    (unless (and url (not (string-empty-p url)))
+      (user-error "光标不在可收藏内容上"))
+    (zhihu-reader--save-entry-file zhihu-reader-later-file entries)
+    (message "已加入稍后读: %s" (or title url))))
+
+(defun zhihu-reader-later-list ()
+  "Open read-later list."
+  (interactive)
+  (zhihu-reader--render-link-list
+   "知乎稍后读" (zhihu-reader--load-entry-file zhihu-reader-later-file)
+   '(later) "*Zhihu Later*"))
+
+(defun zhihu-reader-clear-later ()
+  "Clear read-later list."
+  (interactive)
+  (when (yes-or-no-p "清空稍后读？")
+    (zhihu-reader--save-entry-file zhihu-reader-later-file nil)
+    (message "稍后读已清空")))
+
 (defun zhihu-reader--normalize-feed (json)
   "Normalize JSON and filter already-seen recommendations."
   (zhihu-reader--filter-seen (zhihu-reader--normalize-items json)))

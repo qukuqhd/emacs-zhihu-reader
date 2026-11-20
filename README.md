@@ -57,6 +57,8 @@ selected comments/replies in a separate buffer.
 | `zhihu-reader-filter-seen` | t | Hide already shown recommendations |
 | `zhihu-reader-seen-file` | `~/.local/state/.../seen.eld` | Seen IDs |
 | `zhihu-reader-bookmarks-file` | `~/.local/state/.../bookmarks.eld` | Bookmarks |
+| `zhihu-reader-history-file` | `~/.local/state/.../history.eld` | Reading history |
+| `zhihu-reader-later-file` | `~/.local/state/.../later.eld` | Read later |
 | `zhihu-reader-article-directory` | `~/org/zhihu/articles` | New article sources |
 
 ## Files
@@ -271,6 +273,10 @@ C-c F   add to collection
 C-c b   bookmark
 C-c B   bookmark list
 C-c m/u mark read/unread
+C-c C-h reading history
+C-c C-l add to read later
+C-c C-L read later list
+C-c +/-/0 zoom
 ] / [   next/previous page
 i       toggle inline images
 g       refresh current view
