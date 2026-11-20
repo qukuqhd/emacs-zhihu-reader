@@ -183,6 +183,11 @@ Written by `zhihu-reader-set-cookie' with mode 0600."
                  string)
   :group 'zhihu-reader)
 
+(defcustom zhihu-reader-request-timeout 30
+  "HTTP timeout in seconds for synchronous Zhihu requests."
+  :type 'integer
+  :group 'zhihu-reader)
+
 (defcustom zhihu-reader-user-agent
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36"
   "User-Agent used for Zhihu requests."
@@ -341,6 +346,19 @@ Images are cached under `zhihu-reader-image-cache'.  Use
 
 ;;;; HTTP
 
+(defun zhihu-reader--http-status-message (status &optional body)
+  "Return a useful message for HTTP STATUS and BODY."
+  (pcase status
+    (401 "知乎登录态失效，请重新登录（M-x zhihu-reader-login）")
+    (403 "知乎拒绝访问，登录态可能失效或触发风控")
+    (429 "知乎请求过于频繁，请稍后重试")
+    (_ (format "知乎请求失败 (HTTP %s)%s"
+               status
+               (if (and body (not (string-empty-p body)))
+                   (format ": %s" (string-trim
+                                   (substring body 0 (min 300 (length body)))))
+                 "")))))
+
 (defun zhihu-reader--fetch-json (url)
   "Fetch URL with Zhihu cookies and return parsed JSON."
   (let* ((cookie (zhihu-reader--require-login))
@@ -353,7 +371,7 @@ Images are cached under `zhihu-reader-image-cache'.  Use
             ("x-api-version" . "3.0.53")
             ("Accept" . "application/json, text/plain, */*")))
          (buf (condition-case err
-                  (url-retrieve-synchronously url t t 30)
+                  (url-retrieve-synchronously url t t zhihu-reader-request-timeout)
                 (error (user-error "知乎请求失败: %s" (error-message-string err))))))
     (unless buf
       (user-error "知乎请求超时"))
@@ -363,9 +381,9 @@ Images are cached under `zhihu-reader-image-cache'.  Use
           (let ((status url-http-response-status))
             (unless (equal status 200)
               (goto-char (point-max))
-              (user-error "知乎请求失败 (HTTP %s): %s"
-                          status
-                          (string-trim
+              (user-error "%s"
+                          (zhihu-reader--http-status-message
+                           status
                            (buffer-substring-no-properties
                             (max (point-min) (- (point-max) 250))
                             (point-max))))))
@@ -406,12 +424,11 @@ When SIGN is non-nil add ZSE headers.  The request does not block Emacs."
                           (unless (equal code 200)
                             (goto-char (point-max))
                             (signal 'error
-                                    (list (format "知乎请求失败 (HTTP %s): %s"
-                                                  code
-                                                  (string-trim
-                                                   (buffer-substring-no-properties
-                                                    (max (point-min) (- (point-max) 250))
-                                                    (point-max))))))))
+                                    (list (zhihu-reader--http-status-message
+                                           code
+                                           (buffer-substring-no-properties
+                                            (max (point-min) (- (point-max) 250))
+                                            (point-max)))))))
                         (goto-char url-http-end-of-headers)
                         (let ((json (json-parse-buffer :object-type 'alist
                                                        :null-object nil

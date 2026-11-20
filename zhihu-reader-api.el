@@ -230,7 +230,7 @@ Return a plist (:status :json :body)."
              (zhihu-reader--zse-headers
               url (cdr (assoc-string "d_c0" cookies))))))
          (url-request-data data))
-    (with-current-buffer (url-retrieve-synchronously url t t 30)
+    (with-current-buffer (url-retrieve-synchronously url t t zhihu-reader-request-timeout)
       (unwind-protect
           (progn
             (goto-char (point-min))
@@ -268,7 +268,7 @@ Return a plist (:status :json :body)."
            (when (and xsrf (not (string-empty-p xsrf)))
              `(("x-xsrftoken" . ,xsrf)))))
          (url-request-data data))
-    (with-current-buffer (url-retrieve-synchronously url t t 30)
+    (with-current-buffer (url-retrieve-synchronously url t t zhihu-reader-request-timeout)
       (unwind-protect
           (progn
             (goto-char (point-min))
@@ -387,7 +387,7 @@ Return a plist (:status :json :body)."
         (url-request-data (if (multibyte-string-p data)
                               (string-to-unibyte data)
                             data)))
-    (with-current-buffer (url-retrieve-synchronously url t t 60)
+    (with-current-buffer (url-retrieve-synchronously url t t zhihu-reader-request-timeout)
       (unwind-protect
           (progn
             (goto-char (point-min))

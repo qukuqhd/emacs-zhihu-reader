@@ -56,5 +56,11 @@
   (should-not (zhihu-reader--zhihu-url-p
                "https://example.com/zhihu")))
 
+
+(ert-deftest zhihu-reader-http-status-messages ()
+  (should (string-match-p "登录" (zhihu-reader--http-status-message 401)))
+  (should (string-match-p "风控" (zhihu-reader--http-status-message 403)))
+  (should (string-match-p "频繁" (zhihu-reader--http-status-message 429))))
+
 (provide 'zhihu-reader-test)
 ;;; zhihu-reader-test.el ends here
