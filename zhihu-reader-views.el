@@ -1046,7 +1046,9 @@ With FORCE non-nil, bypass the page cache."
 (defun zhihu-reader-refresh-unread (&optional silent)
   "Refresh the unread notification count in the background."
   (interactive)
-  (when (ignore-errors (zhihu-reader--cookies))
+  (when (and (not zhihu-reader--unread-poll-inflight)
+             (ignore-errors (zhihu-reader--cookies)))
+    (setq zhihu-reader--unread-poll-inflight t)
     (zhihu-reader--fetch-json-async
      "https://api.zhihu.com/notifications/v3/message/v3"
      (lambda (json)
@@ -1054,26 +1056,33 @@ With FORCE non-nil, bypass the page cache."
               (count (or (zhihu-reader--alist-get
                           'count (zhihu-reader--alist-get 'message unread))
                          0)))
+         (setq zhihu-reader--unread-poll-inflight nil)
          (setq zhihu-reader--unread-total (or count 0))
          (force-mode-line-update t)
          (unless silent
            (message "未读通知: %s" zhihu-reader--unread-total))))
-     (lambda (error) (unless silent (message "未读数刷新失败: %s" error))))))
+     (lambda (error)
+       (setq zhihu-reader--unread-poll-inflight nil)
+       (unless silent (message "未读数刷新失败: %s" error))))))
 
 (defun zhihu-reader-start-unread-poll (&optional interval)
-  "Start periodic unread-count polling."
+  "Start periodic unread-count polling.
+With no INTERVAL, do not restart an already active timer."
   (interactive)
-  (when (timerp zhihu-reader--unread-poll-timer)
-    (cancel-timer zhihu-reader--unread-poll-timer))
-  (setq zhihu-reader-unread-poll-interval
-        (or interval zhihu-reader-unread-poll-interval))
-  (when (and (numberp zhihu-reader-unread-poll-interval)
-             (> zhihu-reader-unread-poll-interval 0))
-    (setq zhihu-reader--unread-poll-timer
-          (run-with-timer 0 zhihu-reader-unread-poll-interval
-                          #'zhihu-reader-refresh-unread t))
-    (message "未读通知轮询已开启（%s 秒）"
-             zhihu-reader-unread-poll-interval)))
+  (if (and (null interval) (timerp zhihu-reader--unread-poll-timer))
+      (message "未读通知轮询已在运行")
+    (when (timerp zhihu-reader--unread-poll-timer)
+      (cancel-timer zhihu-reader--unread-poll-timer))
+    (setq zhihu-reader-unread-poll-interval
+          (or interval zhihu-reader-unread-poll-interval))
+    (when (and (numberp zhihu-reader-unread-poll-interval)
+               (> zhihu-reader-unread-poll-interval 0))
+      (setq zhihu-reader--unread-poll-timer
+            (run-with-timer zhihu-reader-unread-poll-interval
+                            zhihu-reader-unread-poll-interval
+                            #'zhihu-reader-refresh-unread t))
+      (message "未读通知轮询已开启（%s 秒）"
+               zhihu-reader-unread-poll-interval))))
 
 (defun zhihu-reader-stop-unread-poll ()
   "Stop unread-count polling."

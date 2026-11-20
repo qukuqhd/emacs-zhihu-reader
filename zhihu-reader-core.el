@@ -134,6 +134,7 @@ Written by `zhihu-reader-set-cookie' with mode 0600."
   :group 'zhihu-reader)
 
 (defvar zhihu-reader--unread-poll-timer nil)
+(defvar zhihu-reader--unread-poll-inflight nil)
 
 (defvar zhihu-reader--unread-total 0
   "Last known total of unread Zhihu notifications/messages.")
@@ -187,6 +188,18 @@ Written by `zhihu-reader-set-cookie' with mode 0600."
   "HTTP timeout in seconds for synchronous Zhihu requests."
   :type 'integer
   :group 'zhihu-reader)
+
+(defcustom zhihu-reader-request-retries 2
+  "Number of automatic retries for idempotent GET requests."
+  :type 'integer
+  :group 'zhihu-reader)
+
+(defcustom zhihu-reader-request-retry-delay 1
+  "Seconds to wait between retried GET requests."
+  :type 'number
+  :group 'zhihu-reader)
+
+(defvar zhihu-reader--async-requests (make-hash-table :test #'eq))
 
 (defcustom zhihu-reader-user-agent
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36"
@@ -395,55 +408,87 @@ Images are cached under `zhihu-reader-image-cache'.  Use
 
 (defun zhihu-reader--fetch-json-async (url success &optional failure sign)
   "Fetch URL asynchronously; call SUCCESS with JSON or FAILURE with a string.
-When SIGN is non-nil add ZSE headers.  The request does not block Emacs."
-  (let* ((cookie (zhihu-reader--require-login))
-         (url-request-extra-headers
-          (append
-           `(("Cookie" . ,cookie)
-             ("User-Agent" . ,zhihu-reader-user-agent)
-             ("Referer" . "https://www.zhihu.com/")
-             ("Origin" . "https://www.zhihu.com")
-             ("x-requested-with" . "fetch")
-             ("x-api-version" . "3.0.53")
-             ("Accept" . "application/json, text/plain, */*"))
-           (when sign
-             (zhihu-reader--zse-headers
-              url (cdr (assoc-string "d_c0" (zhihu-reader--cookie-alist)))))))
-         (callback
-          (lambda (status)
-            (let ((request-buffer (current-buffer)))
-              (unwind-protect
-                  (condition-case err
-                      (progn
-                        (when-let* ((network-error (plist-get status :error)))
-                          (signal 'error
-                                  (list (format "网络错误: %s"
-                                                (error-message-string network-error)))))
-                        (goto-char (point-min))
-                        (let ((code url-http-response-status))
-                          (unless (equal code 200)
-                            (goto-char (point-max))
-                            (signal 'error
-                                    (list (zhihu-reader--http-status-message
-                                           code
-                                           (buffer-substring-no-properties
-                                            (max (point-min) (- (point-max) 250))
-                                            (point-max)))))))
-                        (goto-char url-http-end-of-headers)
-                        (let ((json (json-parse-buffer :object-type 'alist
-                                                       :null-object nil
-                                                       :false-object nil)))
-                          (funcall success json)))
-                    (error
-                     (if failure
-                         (funcall failure (error-message-string err))
-                       (message "知乎加载失败: %s" (error-message-string err)))))
-                (when (buffer-live-p request-buffer)
-                  (kill-buffer request-buffer))))))
-         (request (url-retrieve url callback nil t)))
-    (when request
-      (message "知乎加载中…"))
-    request))
+When SIGN is non-nil add ZSE headers.  Retry transient GET failures.
+Active requests are tracked so `zhihu-reader-cancel-requests' can stop them."
+  (let ((cookie (zhihu-reader--require-login)))
+    (cl-labels
+        ((start (attempt)
+           (let* ((headers
+                   (append
+                    `(("Cookie" . ,cookie)
+                      ("User-Agent" . ,zhihu-reader-user-agent)
+                      ("Referer" . "https://www.zhihu.com/")
+                      ("Origin" . "https://www.zhihu.com")
+                      ("x-requested-with" . "fetch")
+                      ("x-api-version" . "3.0.53")
+                      ("Accept" . "application/json, text/plain, */*"))
+                    (when sign
+                      (zhihu-reader--zse-headers
+                       url (cdr (assoc-string "d_c0" (zhihu-reader--cookie-alist)))))))
+                  (url-request-extra-headers headers)
+                  (request (url-retrieve
+                            url
+                            (lambda (status)
+                              (let ((request-buffer (current-buffer)))
+                                (unwind-protect
+                                    (let* ((network (plist-get status :error))
+                                           (code (and (not network)
+                                                      url-http-response-status)))
+                                      (remhash request-buffer zhihu-reader--async-requests)
+                                      (cond
+                                       ((or network
+                                            (memq code '(429 500 502 503 504)))
+                                        (if (< attempt zhihu-reader-request-retries)
+                                            (run-with-timer
+                                             zhihu-reader-request-retry-delay nil
+                                             (lambda () (start (1+ attempt))))
+                                          (let ((msg (if network
+                                                         (format "网络错误: %s"
+                                                                 (error-message-string network))
+                                                       (zhihu-reader--http-status-message code))))
+                                            (if failure (funcall failure msg)
+                                              (message "知乎加载失败: %s" msg)))))
+                                       ((not (equal code 200))
+                                        (goto-char (point-max))
+                                        (let ((msg (zhihu-reader--http-status-message
+                                                    code
+                                                    (buffer-substring-no-properties
+                                                     (max (point-min) (- (point-max) 250))
+                                                     (point-max)))))
+                                          (if failure (funcall failure msg)
+                                            (message "知乎加载失败: %s" msg))))
+                                       (t
+                                        (goto-char url-http-end-of-headers)
+                                        (let ((json (json-parse-buffer
+                                                     :object-type 'alist
+                                                     :null-object nil
+                                                     :false-object nil)))
+                                          (funcall success json)))))
+                                  (when (buffer-live-p request-buffer)
+                                    (kill-buffer request-buffer)))))
+                            nil t)))
+             (when request
+               (puthash request t zhihu-reader--async-requests)
+               (message "知乎加载中…")))))
+      (start 0))))
+
+(defun zhihu-reader-cancel-requests ()
+  "Cancel all active Zhihu GET requests."
+  (interactive)
+  (let ((count 0))
+    (maphash (lambda (request _)
+               (cond
+                ((processp request) (ignore-errors (delete-process request)))
+                ((buffer-live-p request)
+                 (with-current-buffer request
+                   (ignore-errors
+                     (when-let* ((proc (get-buffer-process request)))
+                       (delete-process proc))))
+                 (ignore-errors (kill-buffer request))))
+               (setq count (1+ count)))
+             zhihu-reader--async-requests)
+    (clrhash zhihu-reader--async-requests)
+    (message "已取消 %d 个知乎请求" count)))
 
 (defun zhihu-reader--prepare-buffer (title view buffer-name)
   "Prepare and display a loading buffer."

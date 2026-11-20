@@ -41,6 +41,9 @@ selected comments/replies in a separate buffer.
 | `zhihu-reader-hot-url` | hot list URL | Hot list endpoint |
 | `zhihu-reader-search-url` | v4 search URL | Search endpoint |
 | `zhihu-reader-search-sort` | nil | Optional search sort |
+| `zhihu-reader-request-timeout` | 30 | Sync HTTP timeout |
+| `zhihu-reader-request-retries` | 2 | GET retry count |
+| `zhihu-reader-request-retry-delay` | 1 | Retry delay |
 | `zhihu-reader-search-content-type` | `all` | Search: all/answer/article |
 | `zhihu-reader-search-time-range` | `all` | Search: day/week/month/year |
 | `zhihu-reader-copy-link-include-title` | t | Prepend question/article title to copied links |
