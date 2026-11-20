@@ -69,11 +69,10 @@
       (save-excursion
         (goto-char marker)
         (ignore-errors (org-back-to-heading t))
-        ;; Narrowing makes this impossible to affect sibling questions,
-        ;; even if Org's global fold state was inherited from a prior page.
-        (save-restriction
-          (ignore-errors (org-narrow-to-subtree))
-          (ignore-errors (org-fold-show-all))))
+        ;; Only reveal this comments subtree.  Do not use
+        ;; `org-fold-show-all': it can leak into unrelated headings when
+        ;; comments arrive while the user has moved the cursor.
+        (ignore-errors (org-fold-show-subtree)))
       (ignore-errors (force-window-update (current-buffer))))))
 
 (defun zhihu-reader--set-comment-status (marker status &optional actual)

@@ -398,6 +398,7 @@ KIND is \"answer\" or \"article\"; CURSOR is an optional paging URL."
 KIND is \"answer\" or \"article\"; CURSOR is an optional paging URL.
 When SHOW is non-nil, expand the comments subtree."
   (let ((buffer (current-buffer))
+        (origin (copy-marker (point)))
         (generation zhihu-reader--generation)
         (level (save-excursion
                  (goto-char marker)
@@ -410,7 +411,8 @@ When SHOW is non-nil, expand the comments subtree."
        (unwind-protect
            (when (zhihu-reader--generation-current-p buffer generation)
              (with-current-buffer buffer
-               (let ((inhibit-read-only t))
+               (let ((inhibit-read-only t)
+                     (moved (not (equal (point) (marker-position origin)))))
                  (save-excursion
                    (goto-char marker)
                    (org-back-to-heading t)
@@ -427,7 +429,7 @@ When SHOW is non-nil, expand the comments subtree."
                    (save-excursion
                      (goto-char marker)
                      (org-entry-put nil "ZHIHU-COMMENTS-LOADED" "t"))
-                   (if show
+                   (if (and show (not moved))
                        (zhihu-reader--show-comment-subtree marker)
                      (ignore-errors (org-fold-hide-subtree)))
                    (zhihu-reader--hide-drawers)
@@ -460,6 +462,7 @@ When SHOW is non-nil, expand the comments subtree."
 CURSOR selects the page; SHOW expands the subtree; REPLACE clears the old
 child comments first (used by previous-page navigation)."
   (let ((buffer (current-buffer))
+        (origin (copy-marker (point)))
         (generation zhihu-reader--generation)
         (level (save-excursion
                  (goto-char marker)
@@ -470,7 +473,8 @@ child comments first (used by previous-page navigation)."
      (lambda (json)
        (when (zhihu-reader--generation-current-p buffer generation)
          (with-current-buffer buffer
-           (let ((inhibit-read-only t))
+           (let ((inhibit-read-only t)
+                 (moved (not (equal (point) (marker-position origin)))))
              (save-excursion
                (goto-char marker)
                (org-back-to-heading t)
@@ -488,7 +492,7 @@ child comments first (used by previous-page navigation)."
                  (goto-char marker)
                  (org-entry-put nil "ZHIHU-CHILDREN-LOADED" "t")
                  (zhihu-reader--set-child-paging marker json)
-                 (if show
+                 (if (and show (not moved))
                      (zhihu-reader--show-comment-subtree marker)
                    (ignore-errors (org-fold-hide-subtree)))
                  (zhihu-reader--hide-drawers)
