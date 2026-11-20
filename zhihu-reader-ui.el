@@ -349,31 +349,35 @@ be non-nil; vanilla `org-display-inline-images' only renders bare links."
                (zhihu-reader--image-finish-loading)))
            (signal (car err) (cdr err))))))))
 
-(defun zhihu-reader--close-open-org-blocks ()
-  "Close any unclosed #+begin_ block in the current subtree body.
-This keeps image links inserted after HTML content outside code blocks."
-  (save-excursion
-    (let ((start (save-excursion
-                   (org-back-to-heading t)
-                   (forward-line 1)
-                   (when (looking-at ":PROPERTIES:")
-                     (re-search-forward "^:END:" nil t)
-                     (forward-line 1))
-                   (point)))
-          (case-fold-search t)
-          (stack nil))
-      (goto-char start)
-      (while (re-search-forward "^\(#\+\(begin\|end\)_\([a-zA-Z0-9_-]+\)\)" nil t)
-        (let ((kind (match-string 2))
-              (name (downcase (match-string 3))))
-          (if (string-equal kind "begin")
-              (push name stack)
-            (when (equal (car stack) name)
-              (pop stack)))))
-      (goto-char (point))
-      (dolist (name (reverse stack))
-        (insert "#+end_" name "
-")))))
+(defun zhihu-reader--close-open-org-blocks (&optional position)
+  "Close unclosed #+begin_ blocks before POSITION.
+Scan only the current subtree body and insert the closing lines at
+POSITION (default point), so later headings/images cannot be swallowed."
+  (let ((pos (or position (point)))
+        (case-fold-search t)
+        (stack nil))
+    (save-excursion
+      (ignore-errors
+        (org-back-to-heading t)
+        (forward-line 1)
+        (when (looking-at ":PROPERTIES:")
+          (re-search-forward "^:END:" nil t)
+          (forward-line 1))
+        (let ((start (point)))
+          (goto-char start)
+          (while (re-search-forward
+                  "^\\(#\\+\\(begin\\|end\\)_\\([a-zA-Z0-9_-]+\\)\\)"
+                  pos t)
+            (let ((kind (match-string 2))
+                  (name (downcase (match-string 3))))
+              (if (string-equal kind "begin")
+                  (push name stack)
+                (when (equal (car stack) name)
+                  (pop stack)))))))
+      (when stack
+        (goto-char pos)
+        (dolist (name (reverse stack))
+          (insert (format "#+end_%s\n" name)))))))
 
 (defun zhihu-reader--insert-images (images)
   "Insert IMAGES as Org links and download them asynchronously."
@@ -412,7 +416,8 @@ This keeps image links inserted after HTML content outside code blocks."
            (cons "ZHIHU-QUESTION" (plist-get item :question-id))
            (cons "ZHIHU-AUTHOR-TOKEN" (plist-get item :author-token))))
     (when (not (string-empty-p (or (plist-get item :content) "")))
-      (zhihu-reader--body (plist-get item :content)))
+      (zhihu-reader--body (plist-get item :content))
+      (zhihu-reader--close-open-org-blocks))
     (when (plist-get item :images)
       (zhihu-reader--close-open-org-blocks)
       (zhihu-reader--insert-images (plist-get item :images)))
@@ -443,6 +448,7 @@ This keeps image links inserted after HTML content outside code blocks."
       (when (plist-get first :question-images)
         (zhihu-reader--close-open-org-blocks)
         (zhihu-reader--insert-images (plist-get first :question-images)))
+      (zhihu-reader--close-open-org-blocks)
       (when (or (not (string-empty-p (or (plist-get first :question-detail) "")))
                 (plist-get first :question-images))
         (insert "\n"))
@@ -457,6 +463,7 @@ This keeps image links inserted after HTML content outside code blocks."
         (when (plist-get item :images)
           (zhihu-reader--close-open-org-blocks)
           (zhihu-reader--insert-images (plist-get item :images)))
+        (zhihu-reader--close-open-org-blocks)
         (insert "\n")
         (zhihu-reader--comment-heading
          2 (plist-get item :comment-count) (plist-get item :id) "article")

@@ -581,9 +581,9 @@ LIST-TYPE is `ul' or `ol' when inside a list."
         ((or 'h1 'h2 'h3 'h4 'h5 'h6)
          (concat "*" (string-trim (funcall text)) "*\n\n"))
         ('blockquote
-         (concat "#+begin_quote\n" (string-trim (funcall inner)) "\n#+end_quote\n\n"))
+         (concat "\n#+begin_quote\n" (string-trim (funcall inner)) "\n#+end_quote\n\n"))
         ('pre
-         (concat "#+begin_example\n"
+         (concat "\n#+begin_example\n"
                  (string-trim (zhihu-reader--dom-text node))
                  "\n#+end_example\n\n"))
         ('code
@@ -610,9 +610,16 @@ LIST-TYPE is `ul' or `ol' when inside a list."
         ('ol
          (concat "\n" (funcall inner 'ol) "\n"))
         ('li
-         (concat (if (eq list-type 'ol) "1. " "- ")
-                 (string-trim (funcall inner))
-                 "\n"))
+         (let* ((body (string-trim (funcall inner)))
+                (prefix (if (eq list-type 'ol) "1. " "- ")))
+           (if (string-prefix-p "#+begin_" body)
+               ;; A block cannot follow "- " on the same line; indent it as
+               ;; the list item body so begin/end markers stay balanced.
+               (concat prefix "\n"
+                       (mapconcat (lambda (line) (concat "  " line))
+                                  (split-string body "\n") "\n")
+                       "\n")
+             (concat prefix body "\n"))))
         ('span
          (let ((tex (dom-attr node 'data-tex)))
            (if (and tex (not (string-empty-p tex)))
@@ -620,7 +627,7 @@ LIST-TYPE is `ul' or `ol' when inside a list."
              (funcall inner))))
         ('img "")
         ('table
-         (concat "#+begin_example\n" (string-trim (funcall text)) "\n#+end_example\n\n"))
+         (concat "\n#+begin_example\n" (string-trim (funcall text)) "\n#+end_example\n\n"))
         (_ (funcall inner)))))))
 
 (defun zhihu-reader--content-blocks-to-org (blocks)

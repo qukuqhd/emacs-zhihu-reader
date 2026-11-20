@@ -205,7 +205,8 @@ With FORCE non-nil, bypass the page cache."
                (cons "ZHIHU-AUTHOR-TOKEN"
                      (or (plist-get comment :author-token) "")))))
       (when (not (string-empty-p (or (plist-get comment :content) "")))
-        (zhihu-reader--body (plist-get comment :content)))
+        (zhihu-reader--body (plist-get comment :content))
+        (zhihu-reader--close-open-org-blocks))
       (insert "\n"))))
 
 (defun zhihu-reader--clear-comment-body (marker)
