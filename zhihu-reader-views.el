@@ -14,6 +14,8 @@
 (require 'zhihu-reader-ui)
 (require 'zhihu-reader-comments)
 
+(defvar-local zhihu-reader--inbox-next nil)
+
 (defvar-local zhihu-reader--notifications-next nil)
 (defvar-local zhihu-reader--notifications-prev nil)
 
@@ -159,6 +161,9 @@ BUFFER-NAME overrides the target buffer for search/article views."
         (zhihu-reader-user (match-string 1 path) "*Zhihu User*"))
        ((string-match "/topic/\\([0-9]+\\)" path)
         (zhihu-reader-topic (match-string 1 path) nil "*Zhihu Topic*"))
+       ((string-match "/inbox" path) (zhihu-reader-inbox))
+       ((string-match "/chat/\\([^/?]+\\)" path)
+        (zhihu-reader-chat (match-string 1 path)))
        ((string-match "/pin/\\([0-9]+\\)" path)
         (zhihu-reader-pin (match-string 1 path) "*Zhihu Pin*"))
        ((string-match "/column/\\([^/?]+\\)" path)
@@ -441,6 +446,115 @@ CURSOR is an optional `moments_v3' paging URL."
              (setq-local zhihu-reader--collection-has-next
                          (and (zhihu-reader--alist-get 'next paging)
                               (not (eq (zhihu-reader--alist-get 'is_end paging) t)))))))))))
+
+(defun zhihu-reader-inbox (&optional after-id)
+  "Open Zhihu private-message inbox."
+  (interactive)
+  (let* ((url (if after-id
+                  (format "https://www.zhihu.com/api/v4/inbox?limit=20&after_id=%s" after-id)
+                "https://www.zhihu.com/api/v4/inbox?limit=20"))
+         (resp (zhihu-reader--http-json "GET" url nil nil))
+         (json (plist-get resp :json))
+         (status (plist-get resp :status))
+         (buffer "*Zhihu Inbox*"))
+    (unless (memq status '(200 201))
+      (user-error "私信列表加载失败 (HTTP %s)" status))
+    (let* ((data (append (or (zhihu-reader--alist-get 'data json) []) nil))
+           (unread (or (zhihu-reader--alist-get 'new_count json) 0))
+           (paging (zhihu-reader--alist-get 'paging json)))
+      (with-current-buffer (get-buffer-create buffer)
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (zhihu-reader-mode)
+          (setq-local zhihu-reader--view (list 'inbox after-id))
+          (setq-local zhihu-reader--inbox-next
+                      (zhihu-reader--alist-get 'next paging))
+          (setq-local header-line-format
+                      (format " 知乎私信 · 未读 %s  | RET 打开  g 刷新  ] 下一页  q 关闭" unread))
+          (insert (format "#+TITLE: 知乎私信 · 未读 %s\n#+STARTUP: overview\n\n" unread))
+          (dolist (thread data)
+            (let* ((participant (zhihu-reader--alist-get 'participant thread))
+                   (name (or (zhihu-reader--alist-get 'name participant) "未知"))
+                   (pid (or (zhihu-reader--alist-get 'id participant)
+                            (zhihu-reader--alist-get 'url_token participant)))
+                   (snippet (or (zhihu-reader--alist-get 'snippet thread) ""))
+                   (unread-count (or (zhihu-reader--alist-get 'unread_count thread) 0))
+                   (time (zhihu-reader--alist-get 'updated_time thread)))
+              (insert (format "* %s%s\n  %s\n"
+                              (org-link-make-string
+                               (format "https://www.zhihu.com/chat/%s" pid)
+                               (zhihu-reader--safe-title name))
+                              (if (> (or unread-count 0) 0)
+                                  (format " · 未读 %s" unread-count) "")
+                              (replace-regexp-in-string "[\r\n]+" " " snippet)))
+              (when time
+                (insert "  " (format-time-string "%Y-%m-%d %H:%M"
+                                                  (seconds-to-time time))))
+              (insert "\n\n")))
+          (if (null data) (insert "没有私信。\n"))
+          (goto-char (point-min))
+          (ignore-errors (org-overview))
+          (setq buffer-read-only t))
+        (pop-to-buffer (get-buffer buffer))))))
+
+(defun zhihu-reader-chat (peer-id)
+  "Open private conversation with PEER-ID."
+  (interactive "s知乎用户 _id: ")
+  (let* ((url (format "https://www.zhihu.com/api/v4/chat?sender_id=%s" peer-id))
+         (resp (zhihu-reader--http-json "GET" url nil nil))
+         (json (plist-get resp :json))
+         (status (plist-get resp :status))
+         (data (zhihu-reader--alist-get 'data json))
+         (messages (append (or (zhihu-reader--alist-get 'messages data) []) nil))
+         (buffer "*Zhihu Chat*"))
+    (unless (memq status '(200 201))
+      (user-error "私信加载失败 (HTTP %s)" status))
+    (with-current-buffer (get-buffer-create buffer)
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (zhihu-reader-mode)
+        (setq-local zhihu-reader--view (list 'chat peer-id))
+        (setq-local header-line-format
+                    (format " 知乎私信  | C-c C-c 发送  g 刷新  q 关闭"))
+        (insert "#+TITLE: 知乎私信\n#+STARTUP: overview\n\n")
+        (dolist (message (reverse messages))
+          (let* ((text (or (zhihu-reader--alist-get 'text message) ""))
+                 (content (if (equal (zhihu-reader--alist-get 'content_type message) 1)
+                              "[图片]"
+                            (zhihu-reader--html-to-org text)))
+                 (sent (equal (zhihu-reader--alist-get 'user_type message) "sender"))
+                 (sender (if sent "我" "对方"))
+                 (time (zhihu-reader--alist-get 'created_time message)))
+            (insert (format "* %s%s\n%s\n\n"
+                            sender
+                            (if time
+                                (concat " · " (format-time-string
+                                               "%Y-%m-%d %H:%M"
+                                               (seconds-to-time time)))
+                              "")
+                            content))))
+        (if (null messages) (insert "还没有消息。\n"))
+        (goto-char (point-min))
+        (ignore-errors (org-overview))
+        (setq buffer-read-only t))
+      (pop-to-buffer (get-buffer buffer)))))
+
+(defun zhihu-reader-chat-send (text)
+  "Send TEXT to the peer in the current chat buffer."
+  (interactive (list (read-string "发送私信: ")))
+  (unless zhihu-reader-enable-write
+    (user-error "写操作已关闭；请设置 `zhihu-reader-enable-write' 为 t"))
+  (unless (eq (car-safe zhihu-reader--view) 'chat)
+    (user-error "当前不是私信会话"))
+  (let* ((peer (nth 1 zhihu-reader--view))
+         (resp (zhihu-reader--http-json
+                "POST" "https://www.zhihu.com/api/v4/chat"
+                (list :content_type 0 :text text :receiver_id peer) nil))
+         (status (plist-get resp :status)))
+    (unless (memq status '(200 201 202))
+      (error "私信发送失败 (HTTP %s): %s" status (plist-get resp :body)))
+    (message "私信已发送")
+    (zhihu-reader-chat peer)))
 
 (defun zhihu-reader--render-collections (json buffer token)
   "Render collection list JSON in BUFFER."
@@ -1504,6 +1618,8 @@ dedicated buffer (used by internal link routing)."
                                    (nth 3 zhihu-reader--view)
                                    (nth 4 zhihu-reader--view)))
     ('notifications (zhihu-reader-notifications (nth 1 zhihu-reader--view)))
+    ('inbox (zhihu-reader-inbox (nth 1 zhihu-reader--view)))
+    ('chat (zhihu-reader-chat (nth 1 zhihu-reader--view)))
     ('notification-timeline
      (zhihu-reader-notification-timeline (nth 1 zhihu-reader--view)
                                          (nth 2 zhihu-reader--view)))

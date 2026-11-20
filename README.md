@@ -221,6 +221,8 @@ M-x zhihu-reader-answer    ; answer + comments
 M-x zhihu-reader-article   ; article in its own buffer
 M-x zhihu-reader-user      ; user profile
 M-x zhihu-reader-notifications ; notifications
+M-x zhihu-reader-inbox ; private messages
+M-x zhihu-reader-chat ; open a conversation
 M-x zhihu-reader-user-followers ; followers list
 M-x zhihu-reader-user-followees ; following-users list
 M-x zhihu-reader-user-columns ; user column contributions
