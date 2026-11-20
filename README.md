@@ -44,7 +44,7 @@ selected comments/replies in a separate buffer.
 | `zhihu-reader-render-images` | t | Inline images |
 | `zhihu-reader-image-cache` | `~/.cache/.../images` | Image cache directory |
 | `zhihu-reader-image-width` | 500 | Inline image width |
-| `zhihu-reader-auto-comments` | t | Auto-load visible comments |
+| `zhihu-reader-auto-comments` | nil | Auto-load visible comments |
 | `zhihu-reader-auto-comments-limit` | 10 | Max auto-loaded comment sections |
 | `zhihu-reader-comment-order` | `score` | `score` or `time` |
 | `zhihu-reader-default-expand-questions` | nil | Expand questions on render |

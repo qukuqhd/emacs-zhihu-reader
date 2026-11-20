@@ -138,7 +138,7 @@ ACTUAL is an optional loaded comment count."
   "Image URLs currently being downloaded.")
 (defvar zhihu-reader--image-failed (make-hash-table :test #'equal)
   "Image URLs that failed to download.")
-(defcustom zhihu-reader-auto-comments t
+(defcustom zhihu-reader-auto-comments nil
   "Automatically load comments when a subtree is rendered or expanded."
   :type 'boolean
   :group 'zhihu-reader)
