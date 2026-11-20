@@ -69,10 +69,12 @@
       (save-excursion
         (goto-char marker)
         (ignore-errors (org-back-to-heading t))
-        ;; Only reveal this comments subtree.  Do not use
-        ;; `org-fold-show-all': it can leak into unrelated headings when
-        ;; comments arrive while the user has moved the cursor.
-        (ignore-errors (org-fold-show-subtree)))
+        ;; Reveal only this comments heading and its immediate children.
+        ;; Avoid `org-fold-show-subtree`/`show-all`: both can leak fold
+        ;; state into unrelated questions when comments arrive while the
+        ;; cursor is elsewhere.
+        (ignore-errors (org-fold-show-entry))
+        (ignore-errors (org-fold-show-children)))
       (ignore-errors (force-window-update (current-buffer))))))
 
 (defun zhihu-reader--set-comment-status (marker status &optional actual)
