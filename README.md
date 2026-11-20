@@ -41,6 +41,7 @@ selected comments/replies in a separate buffer.
 | `zhihu-reader-hot-url` | hot list URL | Hot list endpoint |
 | `zhihu-reader-search-url` | v4 search URL | Search endpoint |
 | `zhihu-reader-search-sort` | nil | Optional search sort |
+| `zhihu-reader-copy-link-include-title` | t | Prepend question/article title to copied links |
 | `zhihu-reader-max-excerpt` | 1200 | Excerpt truncation length |
 | `zhihu-reader-render-images` | t | Inline images |
 | `zhihu-reader-image-cache` | `~/.cache/.../images` | Image cache directory |
@@ -146,7 +147,9 @@ Recommendation and search results are grouped by question:
 - `C-c b` bookmarks the current answer/article; `C-c B` opens the bookmark
   list.  `C-c m` / `C-c u` mark read/unread.
 - `w` or `C-c w` copies a canonical share link for the current question,
-  answer, article or comment (`🔗`).
+  answer, article or comment (`🔗`).  By default the top-level question or
+  article title is prepended; set `zhihu-reader-copy-link-include-title`
+  to nil for link-only copying.
 - Question descriptions are fetched with a native ZSE v4 signature.
 - Recommendation items are deduplicated by question/article ID.  Seen IDs
   persist in `~/.local/state/zhihu-reader/seen.eld`; clear them with

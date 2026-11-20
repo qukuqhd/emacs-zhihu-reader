@@ -163,18 +163,32 @@ BUFFER-NAME overrides the target buffer for search/article views."
      (article (zhihu-reader-article article))
      (t (org-open-at-point)))))
 
+(defun zhihu-reader--share-title ()
+  "Return the top-level question/article title at point."
+  (save-excursion
+    (ignore-errors (org-back-to-heading t))
+    (let ((title (ignore-errors (org-get-heading t t t t))))
+      (while (ignore-errors (org-up-heading-safe))
+        (setq title (org-get-heading t t t t)))
+      title)))
+
 (defun zhihu-reader-copy-share-link ()
   "Copy the canonical share link for the content at point."
   (interactive)
-  (let ((url (zhihu-reader--current-url)))
+  (let* ((url (zhihu-reader--current-url))
+         (title (and zhihu-reader-copy-link-include-title
+                     (zhihu-reader--share-title))))
     (unless (and url (not (string-empty-p url)))
       (user-error "光标不在问题、回答、文章或评论标题上"))
-    (kill-new url)
+    (let ((text (if (and title (not (string-empty-p title)))
+                    (concat title "\n" url)
+                  url)))
+      (kill-new text)
     ;; In a graphical or XWayland session also write the system clipboard
     ;; explicitly; `kill-new' alone is not enough for every selection setup.
-    (when (fboundp 'gui-set-selection)
-      (ignore-errors (gui-set-selection 'CLIPBOARD url)))
-    (message "已复制分享链接: %s" url)))
+      (when (fboundp 'gui-set-selection)
+        (ignore-errors (gui-set-selection 'CLIPBOARD text)))
+      (message "已复制分享链接: %s" text))))
 
 (defun zhihu-reader-copy-link ()
   "Copy the current Zhihu link (alias for share link)."

@@ -125,6 +125,11 @@ Written by `zhihu-reader-set-cookie' with mode 0600."
   :type 'string
   :group 'zhihu-reader)
 
+(defcustom zhihu-reader-copy-link-include-title t
+  "When non-nil, prepend the question/article title to copied share links."
+  :type 'boolean
+  :group 'zhihu-reader)
+
 (defcustom zhihu-reader-search-sort nil
   "Optional search sort, e.g. \"upvoted_count\" or \"created_time\"."
   :type '(choice (const :tag "Default" nil)
