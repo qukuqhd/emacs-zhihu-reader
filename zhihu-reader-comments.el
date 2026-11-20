@@ -191,8 +191,9 @@ With FORCE non-nil, bypass the page cache."
             (mapcar
              (lambda (comment)
                (let* ((author (zhihu-reader--alist-get 'author comment))
-                      (content (zhihu-reader--html-to-org
-                                (zhihu-reader--alist-get 'content comment)))
+                      (html (zhihu-reader--alist-get 'content comment))
+                      (content (zhihu-reader--html-to-org html))
+                      (images (zhihu-reader--extract-images html))
                       (child-count (or (zhihu-reader--alist-get 'child_comment_count comment)
                                        (length (alist-get 'child_comments comment)))))
                  (when (not (string-empty-p content))
@@ -204,12 +205,18 @@ With FORCE non-nil, bypass the page cache."
                                    'name (zhihu-reader--alist-get 'member author))
                                   (zhihu-reader--alist-get 'author_name comment))
                          :content content
+                         :images images
                          :author-token (zhihu-reader--string
                                         (or (zhihu-reader--alist-get 'url_token author)
                                             (zhihu-reader--alist-get
                                              'url_token
                                              (zhihu-reader--alist-get 'member author))))
                          :child-count (zhihu-reader--string child-count)
+                         :reply-to (zhihu-reader--string
+                                    (or (zhihu-reader--alist-get 'reply_comment_id comment)
+                                        (zhihu-reader--alist-get 'reply_root_comment_id comment)))
+                         :reply-root (zhihu-reader--string
+                                      (zhihu-reader--alist-get 'reply_root_comment_id comment))
                          :votes (zhihu-reader--string
                                  (or (zhihu-reader--alist-get 'vote_count comment)
                                      (zhihu-reader--alist-get 'voteup_count comment)))
@@ -217,33 +224,58 @@ With FORCE non-nil, bypass the page cache."
                                 (zhihu-reader--alist-get 'created_time comment))))))
              (append data nil))))))
 
-(defun zhihu-reader--insert-comments (comments level)
-  "Insert COMMENTS at Org LEVEL."
-  (dolist (comment comments)
-    (let ((id (plist-get comment :id))
-          (child-count (plist-get comment :child-count)))
-      (zhihu-reader--heading
-       level
-       (format "%s%s%s%s"
-               (or (plist-get comment :author) "匿名")
-               (let ((votes (plist-get comment :votes)))
-                 (if (and votes (not (string-empty-p votes)))
-                     (format " · %s 赞" votes) ""))
-               (let ((time (plist-get comment :time)))
-                 (if time (concat " · " time) ""))
-               (let ((count (and child-count
-                                 (not (string= child-count "0"))
-                                 child-count)))
-                 (if count (format " · 回复 %s" count) "")))
-       (when (and id (not (string-empty-p id)))
-         (list (cons "ZHIHU-COMMENT" id)
-               (cons "ZHIHU-CHILD-COUNT" (or child-count "0"))
-               (cons "ZHIHU-AUTHOR-TOKEN"
-                     (or (plist-get comment :author-token) "")))))
-      (when (not (string-empty-p (or (plist-get comment :content) "")))
-        (zhihu-reader--body (plist-get comment :content))
-        (zhihu-reader--close-open-org-blocks))
-      (insert "\n"))))
+(defun zhihu-reader--insert-comments (comments level &optional root-id)
+  "Insert COMMENTS at Org LEVEL.
+ROOT-ID is the parent comment id; replies to it are marked as replies to
+the root comment, while replies to another reply show the target author
+when available."
+  (let ((authors (make-hash-table :test #'equal)))
+    (dolist (comment comments)
+      (let ((id (plist-get comment :id)))
+        (when (and id (not (string-empty-p id)))
+          (puthash id (or (plist-get comment :author) "匿名") authors))))
+    (dolist (comment comments)
+      (let* ((id (plist-get comment :id))
+             (child-count (plist-get comment :child-count))
+             (reply-to (plist-get comment :reply-to))
+             (target-author (and reply-to
+                                 (not (string-empty-p reply-to))
+                                 (gethash reply-to authors)))
+             (reply-label
+              (cond
+               ((or (null reply-to) (string-empty-p reply-to)) "")
+               ((and root-id (equal reply-to root-id)) " · 回复此评论")
+               (target-author (format " · 回复 @%s" target-author))
+               (t (format " · 回复评论 %s" reply-to)))))
+        (zhihu-reader--heading
+         level
+         (format "%s%s%s%s%s"
+                 (or (plist-get comment :author) "匿名")
+                 (let ((votes (plist-get comment :votes)))
+                   (if (and votes (not (string-empty-p votes)))
+                       (format " · %s 赞" votes) ""))
+                 (let ((time (plist-get comment :time)))
+                   (if time (concat " · " time) ""))
+                 (let ((count (and child-count
+                                   (not (string= child-count "0"))
+                                   child-count)))
+                   (if count (format " · 回复 %s" count) ""))
+                 reply-label)
+         (when (and id (not (string-empty-p id)))
+           (list (cons "ZHIHU-COMMENT" id)
+                 (cons "ZHIHU-CHILD-COUNT" (or child-count "0"))
+                 (cons "ZHIHU-AUTHOR-TOKEN"
+                       (or (plist-get comment :author-token) "")))))
+        (when (not (string-empty-p (or (plist-get comment :content) "")))
+          (zhihu-reader--body (plist-get comment :content))
+          (zhihu-reader--close-open-org-blocks))
+        (when (plist-get comment :images)
+          (zhihu-reader--close-open-org-blocks)
+          (let ((start (point)))
+            (zhihu-reader--insert-images (plist-get comment :images))
+            (when (and zhihu-reader-render-images (display-graphic-p))
+              (zhihu-reader--process-buffer-images start (point)))))
+        (insert "\n")))))
 
 (defun zhihu-reader--clear-comment-body (marker)
   "Remove existing comments below MARKER, preserving heading properties."
@@ -286,7 +318,8 @@ With FORCE non-nil, bypass the page cache."
 (defun zhihu-reader--load-comments-at (id marker kind &optional cursor)
   "Load a root comments page for ID at MARKER.
 KIND is \"answer\" or \"article\"; CURSOR is an optional paging URL."
-  (let* ((json (zhihu-reader--fetch-json
+  (let* ((origin (copy-marker (point)))
+         (json (zhihu-reader--fetch-json
                 (zhihu-reader--comments-url id kind cursor)))
          (comments (zhihu-reader--normalize-comments json))
          (level (save-excursion
@@ -310,13 +343,15 @@ KIND is \"answer\" or \"article\"; CURSOR is an optional paging URL."
         (org-entry-put nil "ZHIHU-COMMENTS-LOADED" "t"))
       (zhihu-reader--show-comment-subtree marker)
       (zhihu-reader--hide-drawers)
-      (setq buffer-read-only t))))
+      (setq buffer-read-only t)
+      (goto-char origin))))
 
 (defun zhihu-reader--load-comments-async (id marker kind &optional cursor show)
   "Load a root comments page for ID asynchronously at MARKER.
 KIND is \"answer\" or \"article\"; CURSOR is an optional paging URL.
 When SHOW is non-nil, expand the comments subtree."
   (let ((buffer (current-buffer))
+        (origin (copy-marker (point)))
         (generation zhihu-reader--generation)
         (level (save-excursion
                  (goto-char marker)
@@ -349,7 +384,8 @@ When SHOW is non-nil, expand the comments subtree."
                      (zhihu-reader--show-comment-subtree marker)
                    (ignore-errors (org-fold-hide-subtree)))
                  (zhihu-reader--hide-drawers)
-                 (setq buffer-read-only t))))
+                 (setq buffer-read-only t)
+                 (goto-char origin))))
          (remhash id zhihu-reader--comments-inflight)))
      (lambda (error)
        (remhash id zhihu-reader--comments-inflight)
@@ -378,6 +414,7 @@ When SHOW is non-nil, expand the comments subtree."
 CURSOR selects the page; SHOW expands the subtree; REPLACE clears the old
 child comments first (used by previous-page navigation)."
   (let ((buffer (current-buffer))
+        (origin (copy-marker (point)))
         (generation zhihu-reader--generation)
         (level (save-excursion
                  (goto-char marker)
@@ -400,7 +437,7 @@ child comments first (used by previous-page navigation)."
              (let ((comments (zhihu-reader--normalize-comments json)))
                (unless comments
                  (message "知乎返回 0 条评论（可能已删除或折叠）"))
-               (zhihu-reader--insert-comments comments level))
+               (zhihu-reader--insert-comments comments level comment-id))
              (save-excursion
                (goto-char marker)
                (org-entry-put nil "ZHIHU-CHILDREN-LOADED" "t")
@@ -409,7 +446,8 @@ child comments first (used by previous-page navigation)."
                    (zhihu-reader--show-comment-subtree marker)
                  (ignore-errors (org-fold-hide-subtree)))
                (zhihu-reader--hide-drawers))
-             (setq buffer-read-only t)))))
+             (setq buffer-read-only t)
+             (goto-char origin)))))
      (lambda (error)
        (message "子评论加载失败: %s" error)))))
 
@@ -542,12 +580,41 @@ This is a write operation and cannot be undone."
         (zhihu-reader--load-child-comments-async
          comment-id marker previous t t)))))
 
+(defun zhihu-reader--comment-content-at-marker (marker)
+  "Return the comment body at MARKER, excluding child replies."
+  (when (and (markerp marker) (marker-buffer marker))
+    (with-current-buffer (marker-buffer marker)
+      (save-excursion
+        (goto-char marker)
+        (org-back-to-heading t)
+        (let ((level (or (org-current-level) 1))
+              (start (progn
+                       (forward-line 1)
+                       (when (looking-at ":PROPERTIES:")
+                         (re-search-forward "^:END:" nil t)
+                         (forward-line 1))
+                       (point))))
+          (let ((end (save-excursion
+                       (if (re-search-forward (format "^\\*\\{1,%d\\} " level) nil t)
+                           (match-beginning 0)
+                         (point-max)))))
+            (string-trim (buffer-substring-no-properties start end))))))))
+
 (defun zhihu-reader--open-comments-buffer (target)
   "Open TARGET comments or replies in a standalone Org buffer."
   (let* ((root (nth 0 target))
          (id (nth 1 target))
          (kind (nth 2 target))
+         (marker (nth 3 target))
          (comment-id (nth 4 target))
+         (parent-title (and comment-id marker
+                            (with-current-buffer (marker-buffer marker)
+                              (save-excursion
+                                (goto-char marker)
+                                (org-back-to-heading t)
+                                (org-get-heading t t t t)))))
+         (parent-body (and comment-id marker
+                           (zhihu-reader--comment-content-at-marker marker)))
          (root-id (if comment-id
                       (or (org-entry-get nil "ZHIHU-COMMENTS" t)
                           (org-entry-get nil "ZHIHU-COMMENT" t))
@@ -555,26 +622,34 @@ This is a write operation and cannot be undone."
          (title (if comment-id "知乎评论回复" "知乎评论"))
          (buffer (get-buffer-create
                   (if comment-id "*Zhihu Comment Replies*" "*Zhihu Comments*")))
-         marker)
+         root-marker)
     (with-current-buffer buffer
       (let ((inhibit-read-only t))
         (erase-buffer)
         (zhihu-reader-mode)
         (setq-local zhihu-reader--comments-buffer t)
+        (setq-local header-line-format
+                    (format " %s  | TAB fold  c 子回复  C-c C-o 新 buffer  C-c C-p 回复  q 关闭"
+                            title))
         (insert (format "#+TITLE: %s\n#+STARTUP: overview\n\n" title))
         (if comment-id
-            (insert (format "* 评论\n:PROPERTIES:\n:ZHIHU-COMMENT: %s\n:ZHIHU-COMMENTS: %s\n:ZHIHU-COMMENTS-KIND: %s\n:END:\n"
-                            comment-id (or root-id id) kind))
+            (insert (format "* %s\n:PROPERTIES:\n:ZHIHU-COMMENT: %s\n:ZHIHU-COMMENTS: %s\n:ZHIHU-COMMENTS-KIND: %s\n:END:\n"
+                            (or parent-title "评论")
+                            comment-id (or root-id id) kind)
+                    (or parent-body "")
+                    (if (string-empty-p (or parent-body "")) "" "\n"))
           (insert (format "* 评论\n:PROPERTIES:\n:ZHIHU-COMMENTS: %s\n:ZHIHU-COMMENTS-KIND: %s\n:END:\n"
                           id kind)))
         (goto-char (point-min))
         (re-search-forward "^\\* " nil t)
-        (setq marker (copy-marker (match-beginning 0)))
+        (setq root-marker (copy-marker (match-beginning 0)))
+        (goto-char (point-min))
         (setq buffer-read-only t)
         (if comment-id
-            (zhihu-reader--load-child-comments-async comment-id marker nil t)
-          (zhihu-reader--load-comments-async id marker kind nil t))))
+            (zhihu-reader--load-child-comments-async comment-id root-marker nil t)
+          (zhihu-reader--load-comments-async id root-marker kind nil t))))
     (pop-to-buffer buffer)
+    (with-current-buffer buffer (goto-char (point-min)))
     (message "已在新 buffer 打开%s" (if comment-id "回复" "评论"))))
 
 (defun zhihu-reader-comments ()
@@ -626,7 +701,7 @@ already a standalone comments buffer, open them in a new buffer."
                     (level (1+ (org-current-level))))
                 (org-end-of-subtree)
                 (insert "\n")
-                (zhihu-reader--insert-comments comments level)
+                (zhihu-reader--insert-comments comments level comment-id)
                 (org-entry-put nil "ZHIHU-CHILDREN-LOADED" "t")
                 (zhihu-reader--set-child-paging marker json)
                 (zhihu-reader--show-comment-subtree marker)

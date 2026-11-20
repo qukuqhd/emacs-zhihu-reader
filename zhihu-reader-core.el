@@ -615,9 +615,11 @@ LIST-TYPE is `ul' or `ol' when inside a list."
                           (url-unhex-string (match-string 1 href))
                         href))
                 (label (string-trim (funcall inner))))
-           (if (and href (string-match-p "\\`https?://" href))
-               (org-make-link-string href (if (string-empty-p label) href label))
-             label)))
+           (cond
+            ((zhihu-reader--image-url-p href) "")
+            ((and href (string-match-p "\\`https?://" href))
+             (org-make-link-string href (if (string-empty-p label) href label)))
+            (t label))))
         ('ul
          (concat "\n" (funcall inner 'ul) "\n"))
         ('ol
@@ -694,6 +696,12 @@ LIST-TYPE is `ul' or `ol' when inside a list."
                   (zhihu-reader--alist-get 'url block))))
           (if (vectorp blocks) (append blocks nil) blocks)))))
 
+(defun zhihu-reader--image-url-p (url)
+  "Return non-nil when URL looks like an image URL."
+  (and (stringp url)
+       (or (string-match-p "\\.\\(?:png\\|jpe?g\\|gif\\|webp\\)\\(?:[?#].*\\)?\\'" url)
+           (string-match-p "zhimg\\.com/" url))))
+
 (defun zhihu-reader--extract-images (html)
   "Extract image URLs from HTML or Zhihu content blocks."
   (cond
@@ -705,17 +713,21 @@ LIST-TYPE is `ul' or `ol' when inside a list."
       (let* ((dom (with-temp-buffer
                     (insert html)
                     (libxml-parse-html-region (point-min) (point-max))))
-             (images (dom-by-tag dom 'img)))
+             (images (dom-by-tag dom 'img))
+             (links (dom-by-tag dom 'a)))
         (delete-dups
          (delq nil
-               (mapcar (lambda (node)
-                         (let ((url (or (dom-attr node 'data-original)
-                                        (dom-attr node 'data-actualsrc)
-                                        (dom-attr node 'src))))
-                           (and (stringp url)
-                                (string-match-p "\\`https?://" url)
-                                url)))
-                       images))))))))
+               (append
+                (mapcar (lambda (node)
+                          (let ((url (or (dom-attr node 'data-original)
+                                         (dom-attr node 'data-actualsrc)
+                                         (dom-attr node 'src))))
+                            (and (zhihu-reader--image-url-p url) url)))
+                        images)
+                (mapcar (lambda (node)
+                          (let ((url (dom-attr node 'href)))
+                            (and (zhihu-reader--image-url-p url) url)))
+                        links)))))))))
 
 (defun zhihu-reader--truncate (text &optional limit)
   "Trim TEXT to LIMIT or `zhihu-reader-max-excerpt' characters."
