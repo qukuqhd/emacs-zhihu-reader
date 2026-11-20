@@ -116,11 +116,15 @@ BUFFER-NAME overrides the target buffer for search/article views."
           (zhihu-reader-question content-id))
          (t (zhihu-reader-read-url url))))
        ((string-match "/search" path)
-        (let ((q (or (zhihu-reader--query-value query "q") "")))
-          (if (string-empty-p q)
-              (zhihu-reader-read-url url)
-            (zhihu-reader-search q nil nil
-                                (or buffer-name "*Zhihu Search*")))))
+        (let ((q (or (zhihu-reader--query-value query "q") ""))
+              (type (or (zhihu-reader--query-value query "type") "general")))
+          (cond
+           ((string-empty-p q) (zhihu-reader-read-url url))
+           ((equal type "people")
+            (zhihu-reader-search-people q nil (or buffer-name "*Zhihu People Search*")))
+           ((equal type "topic")
+            (zhihu-reader-search-topics q nil (or buffer-name "*Zhihu Topic Search*")))
+           (t (zhihu-reader-search q nil nil (or buffer-name "*Zhihu Search*"))))))
        ((string-match "/question/\\([0-9]+\\)/answer/\\([0-9]+\\)" path)
         (zhihu-reader-answer (match-string 2 path)))
        ((string-match "/answer/\\([0-9]+\\)" path)
@@ -760,6 +764,73 @@ With FORCE non-nil, bypass the page cache."
     (replace-regexp-in-string
      "offset=0" (format "offset=%d" (* 20 (1- (or page 1)))) url)))
 
+(defun zhihu-reader--search-type-url (type query page)
+  "Build a people/topic search URL."
+  (format "https://www.zhihu.com/api/v4/search_v3?t=%s&q=%s&correction=1&offset=%d&limit=20"
+          type (url-hexify-string query) (* 20 (1- (or page 1)))))
+
+(defun zhihu-reader--search-objects (json)
+  "Extract search result objects from JSON."
+  (let ((data (append (or (zhihu-reader--alist-get 'data json) []) nil)))
+    (delq nil (mapcar (lambda (entry)
+                        (or (zhihu-reader--alist-get 'object entry)
+                            entry))
+                      data))))
+
+(defun zhihu-reader--render-topic-list (title topics view buffer)
+  "Render topic search results."
+  (with-current-buffer (get-buffer-create buffer)
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (zhihu-reader-mode)
+      (setq-local zhihu-reader--view view)
+      (insert (format "#+TITLE: %s\n#+STARTUP: overview\n\n" title))
+      (dolist (topic topics)
+        (let ((id (or (zhihu-reader--alist-get 'id topic)
+                      (zhihu-reader--alist-get 'topic_id topic)))
+              (name (or (zhihu-reader--alist-get 'name topic)
+                        (zhihu-reader--alist-get 'title topic) "话题"))
+              (desc (or (zhihu-reader--alist-get 'excerpt topic)
+                        (zhihu-reader--alist-get 'description topic) "")))
+          (insert (format "* [[https://www.zhihu.com/topic/%s][%s]]\n"
+                          id name))
+          (when (not (string-empty-p desc))
+            (insert "  " (replace-regexp-in-string "[\r\n]+" " " desc) "\n"))
+          (insert "\n")))
+      (if (null topics) (insert "没有返回话题。\n"))
+      (goto-char (point-min))
+      (ignore-errors (org-overview))
+      (setq buffer-read-only t)))
+  (pop-to-buffer buffer))
+
+(defun zhihu-reader-search-people (query &optional page buffer-name)
+  "Search people named QUERY."
+  (interactive (list (read-string "搜索用户: ")
+                     (prefix-numeric-value current-prefix-arg)))
+  (let* ((query (or query (read-string "搜索用户: ")))
+         (page (or page 1))
+         (buffer (or buffer-name "*Zhihu People Search*"))
+         (url (zhihu-reader--search-type-url "people" query page))
+         (json (zhihu-reader--fetch-json url)))
+    (zhihu-reader--render-user-list
+     (format "用户搜索 · %s · 第 %d 页" query page)
+     (zhihu-reader--search-objects json)
+     (list 'search-people query page buffer) buffer)))
+
+(defun zhihu-reader-search-topics (query &optional page buffer-name)
+  "Search topics named QUERY."
+  (interactive (list (read-string "搜索话题: ")
+                     (prefix-numeric-value current-prefix-arg)))
+  (let* ((query (or query (read-string "搜索话题: ")))
+         (page (or page 1))
+         (buffer (or buffer-name "*Zhihu Topic Search*"))
+         (url (zhihu-reader--search-type-url "topic" query page))
+         (json (zhihu-reader--fetch-json url)))
+    (zhihu-reader--render-topic-list
+     (format "话题搜索 · %s · 第 %d 页" query page)
+     (zhihu-reader--search-objects json)
+     (list 'search-topics query page buffer) buffer)))
+
 (defun zhihu-reader-search (&optional query page force buffer-name)
   "Search Zhihu for QUERY, starting at PAGE.
 With FORCE non-nil, bypass the page cache.  BUFFER-NAME selects a
@@ -794,6 +865,12 @@ dedicated buffer (used by internal link routing)."
     ('search (zhihu-reader-search (nth 1 zhihu-reader--view)
                                    (nth 2 zhihu-reader--view) t
                                    (nth 3 zhihu-reader--view)))
+    ('search-people (zhihu-reader-search-people (nth 1 zhihu-reader--view)
+                                                 (nth 2 zhihu-reader--view)
+                                                 (nth 3 zhihu-reader--view)))
+    ('search-topics (zhihu-reader-search-topics (nth 1 zhihu-reader--view)
+                                                 (nth 2 zhihu-reader--view)
+                                                 (nth 3 zhihu-reader--view)))
     ('question (zhihu-reader-question (nth 1 zhihu-reader--view)
                                        (nth 2 zhihu-reader--view)
                                        (nth 3 zhihu-reader--view) t))
@@ -842,6 +919,12 @@ dedicated buffer (used by internal link routing)."
       ('search (zhihu-reader-search (nth 1 view)
                                      (1+ (or (nth 2 view) 1))
                                      nil (nth 3 view)))
+      ('search-people (zhihu-reader-search-people (nth 1 view)
+                                                  (1+ (or (nth 2 view) 1))
+                                                  (nth 3 view)))
+      ('search-topics (zhihu-reader-search-topics (nth 1 view)
+                                                  (1+ (or (nth 2 view) 1))
+                                                  (nth 3 view)))
       ('question (zhihu-reader-question (nth 1 view)
                                         (1+ (or (nth 2 view) 1))
                                         (nth 3 view)))
@@ -881,6 +964,12 @@ dedicated buffer (used by internal link routing)."
       ('search (zhihu-reader-search (nth 1 view)
                                      (max 1 (1- (or (nth 2 view) 1)))
                                      nil (nth 3 view)))
+      ('search-people (zhihu-reader-search-people (nth 1 view)
+                                                  (max 1 (1- (or (nth 2 view) 1)))
+                                                  (nth 3 view)))
+      ('search-topics (zhihu-reader-search-topics (nth 1 view)
+                                                  (max 1 (1- (or (nth 2 view) 1)))
+                                                  (nth 3 view)))
       ('question (zhihu-reader-question (nth 1 view)
                                          (max 1 (1- (or (nth 2 view) 1)))
                                          (nth 3 view)))

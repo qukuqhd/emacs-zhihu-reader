@@ -199,7 +199,9 @@ C-c M   notifications
 M-x zhihu-reader-login     ; external Zen/Firefox sign-in
 M-x zhihu-reader-feed      ; recommendation feed
 M-x zhihu-reader-hot       ; hot list
-M-x zhihu-reader-search    ; search
+M-x zhihu-reader-search    ; general search
+M-x zhihu-reader-search-people ; search users
+M-x zhihu-reader-search-topics ; search topics
 M-x zhihu-reader-question  ; question + answer list
 M-x zhihu-reader-answer    ; answer + comments
 M-x zhihu-reader-article   ; article in its own buffer
