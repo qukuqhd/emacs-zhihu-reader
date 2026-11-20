@@ -1596,7 +1596,10 @@ dedicated buffer (used by internal link routing)."
                      (prefix-numeric-value current-prefix-arg)))
   (let* ((query (or query (read-string "搜索知乎: ")))
          (page (or page 1))
-         (key (list 'search query page buffer-name))
+         (key (list 'search query page buffer-name
+                    zhihu-reader-search-content-type
+                    zhihu-reader-search-time-range
+                    zhihu-reader-search-sort))
          (url (zhihu-reader--search-url query page))
          (title (format "搜索 · %s · 第 %d 页" query page)))
     (zhihu-reader--record-search-history query)
@@ -1611,7 +1614,10 @@ dedicated buffer (used by internal link routing)."
         (zhihu-reader--async-list
          title key url buffer-name
          (lambda (json)
-           (cons title (zhihu-reader--normalize-items json)))
+           (let ((items (zhihu-reader--normalize-items json)))
+             (unless items
+               (message "知乎搜索没有返回内容: %s" url))
+             (cons title items)))
          key)))))
 
 (defun zhihu-reader-refresh ()
