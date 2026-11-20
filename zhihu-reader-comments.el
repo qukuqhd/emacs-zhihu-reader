@@ -541,27 +541,31 @@ child comments first (used by previous-page navigation)."
      (lambda (error)
        (message "子评论加载失败: %s" error)))))
 
+(defun zhihu-reader--find-root-comments-heading ()
+  "Return (ID . MARKER) for the root comments heading near point."
+  (or (let ((id (org-entry-get nil "ZHIHU-COMMENTS")))
+        (and id (cons id (point-marker))))
+      (save-excursion
+        (when (or (org-entry-get nil "ZHIHU-ANSWER")
+                  (org-entry-get nil "ZHIHU-ARTICLE"))
+          (org-end-of-subtree)
+          (when (re-search-backward "^:ZHIHU-COMMENTS: \\([0-9]+\\)" nil t)
+            (let ((id (match-string 1)))
+              (org-back-to-heading t)
+              (cons id (point-marker))))))))
+
 (defun zhihu-reader--comment-target ()
   "Return (ROOT ID KIND MARKER COMMENT-ID) for the heading at point."
   (let* ((comment-id (org-entry-get nil "ZHIHU-COMMENT"))
-         (marker (point-marker))
          (root (null comment-id))
-         (id nil)
-         (kind "answer"))
-    (unless comment-id
-      (setq id (or (org-entry-get nil "ZHIHU-COMMENTS")
-                   (save-excursion
-                     (when (or (org-entry-get nil "ZHIHU-ANSWER")
-                               (org-entry-get nil "ZHIHU-ARTICLE"))
-                       (org-end-of-subtree)
-                       (when (re-search-backward
-                              "^:ZHIHU-COMMENTS: \\([0-9]+\\)" nil t)
-                         (org-back-to-heading t)
-                         (match-string 1))))))
-      (setq kind (or (org-entry-get nil "ZHIHU-COMMENTS-KIND") "answer")))
-    (unless (or id comment-id)
-      (user-error "光标不在评论标题上"))
-    (list root id kind marker comment-id)))
+         (found (unless comment-id (zhihu-reader--find-root-comments-heading)))
+         (id (and found (car found)))
+         (marker (if found (cdr found) (point-marker))))
+    (when (and (null comment-id) (null id))
+      (user-error "光标不在回答、文章或评论标题上"))
+    (list root id
+          (or (org-entry-get nil "ZHIHU-COMMENTS-KIND") "answer")
+          marker comment-id)))
 
 (defun zhihu-reader-comment-sort ()
   "Change root comment sort order and reload the first page."
@@ -745,62 +749,47 @@ This is a write operation and cannot be undone."
     (message "已在新 buffer 打开%s" (if comment-id "回复" "评论"))))
 
 (defun zhihu-reader-comments ()
-  "Load root or child comments at point.
-When `zhihu-reader-comments-separate-buffer' is non-nil and this is not
-already a standalone comments buffer, open them in a new buffer."
+  "Load root or child comments at point."
   (interactive)
-  (if (and zhihu-reader-comments-separate-buffer
-           (not zhihu-reader--comments-buffer))
-      (zhihu-reader--open-comments-buffer (zhihu-reader--comment-target))
-    (let ((comment-id (org-entry-get nil "ZHIHU-COMMENT"))
-        (id nil)
-        (kind "answer")
-        (root t))
-    (if comment-id
-        (setq root nil)
-      (setq id (or (org-entry-get nil "ZHIHU-COMMENTS")
-                   (save-excursion
-                     (when (or (org-entry-get nil "ZHIHU-ANSWER")
-                               (org-entry-get nil "ZHIHU-ARTICLE"))
-                       (org-end-of-subtree)
-                       (when (re-search-backward
-                              "^:ZHIHU-COMMENTS: \\([0-9]+\\)" nil t)
-                         (org-back-to-heading t)
-                         (match-string 1))))))
-      (setq kind (or (org-entry-get nil "ZHIHU-COMMENTS-KIND") "answer")))
-    (unless (or id comment-id)
-      (user-error "光标不在评论标题上"))
-    (let* ((marker (point-marker))
-           (loaded (if root
-                       (org-entry-get nil "ZHIHU-COMMENTS-LOADED")
-                     (org-entry-get nil "ZHIHU-CHILDREN-LOADED"))))
-      (cond
-       (loaded
-        (message "评论已经加载"))
-       (root
-        (if noninteractive
-            (zhihu-reader--load-comments-at id marker kind)
-          (message "评论加载中…")
-          (zhihu-reader--load-comments-async id marker kind nil t)))
-       (t
-        (if noninteractive
-            (let* ((json (zhihu-reader--fetch-json
-                          (zhihu-reader--child-comments-url comment-id)))
-                   (comments (zhihu-reader--normalize-comments json)))
-              (goto-char marker)
-              (org-back-to-heading t)
-              (let ((inhibit-read-only t)
-                    (level (1+ (org-current-level))))
-                (org-end-of-subtree)
-                (insert "\n")
-                (zhihu-reader--insert-comments comments level comment-id)
-                (org-entry-put nil "ZHIHU-CHILDREN-LOADED" "t")
-                (zhihu-reader--set-child-paging marker json)
-                (zhihu-reader--show-comment-subtree marker)
-                (zhihu-reader--hide-drawers)
-                (setq buffer-read-only t)))
-          (message "子评论加载中…")
-          (zhihu-reader--load-child-comments-async comment-id marker nil t))))))))
+  (let* ((target (zhihu-reader--comment-target))
+         (root (nth 0 target))
+         (id (nth 1 target))
+         (kind (nth 2 target))
+         (marker (nth 3 target))
+         (comment-id (nth 4 target)))
+    (if (and zhihu-reader-comments-separate-buffer
+             (not zhihu-reader--comments-buffer))
+        (zhihu-reader--open-comments-buffer target)
+      (let ((loaded (if root
+                        (org-entry-get nil "ZHIHU-COMMENTS-LOADED")
+                      (org-entry-get nil "ZHIHU-CHILDREN-LOADED"))))
+        (cond
+         (loaded (message "评论已经加载"))
+         (root
+          (if noninteractive
+              (zhihu-reader--load-comments-at id marker kind)
+            (message "评论加载中…")
+            (zhihu-reader--load-comments-async id marker kind nil t)))
+         (t
+          (if noninteractive
+              (let* ((json (zhihu-reader--fetch-json
+                            (zhihu-reader--child-comments-url comment-id)))
+                     (comments (zhihu-reader--normalize-comments json)))
+                (goto-char marker)
+                (org-back-to-heading t)
+                (let ((inhibit-read-only t)
+                      (level (1+ (org-current-level))))
+                  (org-end-of-subtree)
+                  (insert "\n")
+                  (zhihu-reader--insert-comments comments level comment-id)
+                  (org-entry-put nil "ZHIHU-CHILDREN-LOADED" "t")
+                  (zhihu-reader--set-child-paging marker json)
+                  (zhihu-reader--show-comment-subtree marker)
+                  (zhihu-reader--hide-drawers)
+                  (setq buffer-read-only t)))
+            (message "子评论加载中…")
+            (zhihu-reader--load-child-comments-async
+             comment-id marker nil t))))))))
 
 (defun zhihu-reader-open-comments-buffer ()
   "Always open comments/replies at point in a separate buffer."
