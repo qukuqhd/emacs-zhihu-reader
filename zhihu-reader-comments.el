@@ -436,6 +436,32 @@ child comments first (used by previous-page navigation)."
       (org-entry-put nil "ZHIHU-COMMENT-LIKED" (if liked "nil" "t"))
       (message (if liked "已取消点赞" "已点赞")))))
 
+(defun zhihu-reader-delete-comment ()
+  "Delete the comment at point after confirmation.
+This is a write operation and cannot be undone."
+  (interactive)
+  (unless zhihu-reader-enable-write
+    (user-error "写操作已关闭；请设置 `zhihu-reader-enable-write' 为 t"))
+  (let ((id (org-entry-get nil "ZHIHU-COMMENT")))
+    (unless id
+      (user-error "光标不在评论标题上"))
+    (unless (yes-or-no-p (format "确认删除评论 %s？" id))
+      (user-error "已取消"))
+    (let* ((url (format "https://www.zhihu.com/api/v4/comment_v5/comment/%s" id))
+           (resp (zhihu-reader--http-json "DELETE" url nil nil))
+           (status (plist-get resp :status)))
+      (unless (memq status '(200 201 202 204))
+        (error "删除评论失败 (HTTP %s): %s" status (plist-get resp :body)))
+      (save-excursion
+        (org-back-to-heading t)
+        (let ((beg (point))
+              (end (save-excursion (org-end-of-subtree t t) (point))))
+          (let ((inhibit-read-only t))
+            (delete-region beg end))))
+      (message "评论已删除")))
+  (ignore-errors (zhihu-reader--hide-drawers))
+  (ignore-errors (force-window-update (current-buffer))))
+
 (defun zhihu-reader-comments-more ()
   "Load the next page of comments at point."
   (interactive)

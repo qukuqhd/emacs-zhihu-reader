@@ -645,6 +645,7 @@ Non-Zhihu URLs keep the EAF/Readability fallback."
   C-c [     上一页评论
   C-c o     切换评论排序（score / time）
   C-c l     点赞 / 取消点赞评论
+  C-c d     删除评论
   C-c c     发表评论或回复
   C-c C-o   在新 buffer 打开评论/回复
 
@@ -697,6 +698,7 @@ Non-Zhihu URLs keep the EAF/Readability fallback."
     (define-key map (kbd "C-c [") #'zhihu-reader-comments-previous)
     (define-key map (kbd "C-c o") #'zhihu-reader-comment-sort)
     (define-key map (kbd "C-c l") #'zhihu-reader-like-comment)
+    (define-key map (kbd "C-c d") #'zhihu-reader-delete-comment)
     (define-key map (kbd "C-c v") #'zhihu-reader-vote)
     (define-key map (kbd "C-c f") #'zhihu-reader-follow)
     (define-key map (kbd "C-c t") #'zhihu-reader-thank)

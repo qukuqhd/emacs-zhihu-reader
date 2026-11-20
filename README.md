@@ -192,6 +192,7 @@ C-c C-Z read URL
 C-c G   following feed
 C-c T   topic feed
 C-c L   collection
+C-c M   notifications
 ```
 
 ```elisp
@@ -204,6 +205,8 @@ M-x zhihu-reader-answer    ; answer + comments
 M-x zhihu-reader-article   ; article in its own buffer
 M-x zhihu-reader-user      ; user profile
 M-x zhihu-reader-notifications ; notifications
+M-x zhihu-reader-user-followers ; followers list
+M-x zhihu-reader-user-followees ; following-users list
 M-x zhihu-reader-open-zhihu-url ; route a Zhihu URL internally
 M-x zhihu-reader-read-url  ; EAF + Readability fallback
 M-x zhihu-reader-edit-at-point ; edit answer/comment in an Org buffer
@@ -242,6 +245,7 @@ C-c ]   next comments page (cursor)
 C-c [   previous comments page (cursor)
 C-c o   comment sort order
 C-c l   like/unlike comment
+C-c d   delete comment
 C-c v   upvote/downvote
 C-c f   follow/unfollow
 C-c t   thank answer
