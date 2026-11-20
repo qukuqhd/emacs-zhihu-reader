@@ -547,10 +547,10 @@ the target buffer."
     (pop-to-buffer buffer)
     (when (and zhihu-reader-render-images (display-graphic-p))
       (with-current-buffer buffer
-        (if (memq (car-safe view) '(question answer))
+        (if (memq (car-safe view) '(question answer article))
             (zhihu-reader--process-buffer-images)
           (zhihu-reader--queue-image-display))))
-    (when (memq (car-safe view) '(question answer))
+    (when (memq (car-safe view) '(question answer article))
       (with-current-buffer buffer
         (zhihu-reader--auto-load-comments)))
     (zhihu-reader--restore-navigation-anchor)
@@ -605,11 +605,15 @@ With prefix argument OFF, disable inline images instead."
       (message "图片渲染已开启；处理了 %d 个图片链接" count))))
 
 (defun zhihu-reader-read-url-from-point ()
-  "Open the URL at point or the current heading with EAF + Readability."
+  "Open the URL at point internally when it is a Zhihu URL.
+Non-Zhihu URLs keep the EAF/Readability fallback."
   (interactive)
   (let ((url (zhihu-reader--current-url)))
     (if (and url (not (string-empty-p url)))
-        (zhihu-reader-read-url url)
+        (if (and (fboundp 'zhihu-reader-open-zhihu-url)
+                 (zhihu-reader--zhihu-url-p url))
+            (zhihu-reader-open-zhihu-url url)
+          (zhihu-reader-read-url url))
       (user-error "光标不在链接或知乎标题上"))))
 
 (defun zhihu-reader-help ()
@@ -652,7 +656,7 @@ With prefix argument OFF, disable inline images instead."
 【分享与阅读】
   w         复制分享链接（🔗）
   C-c w     复制分享链接
-  o         用 EAF + Readability 打开当前链接
+  o         在 Emacs 内打开当前知乎链接
   i         切换内联图片
 
 【入口】

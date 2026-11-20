@@ -449,12 +449,12 @@ When SIGN is non-nil add ZSE headers.  The request does not block Emacs."
       (when (and start (window-live-p (selected-window)))
         (set-window-start (selected-window) start)))))
 
-(defun zhihu-reader--show-cached (key)
-  "Render cached page KEY if present.  Return non-nil on success."
+(defun zhihu-reader--show-cached (key &optional buffer-name)
+  "Render cached page KEY in BUFFER-NAME if present.  Return non-nil on success."
   (let ((entry (gethash key zhihu-reader--page-cache)))
     (when entry
       (let ((anchor zhihu-reader--navigation-anchor))
-        (zhihu-reader--render (car entry) (cdr entry) key)
+        (zhihu-reader--render (car entry) (cdr entry) key buffer-name)
         (unless anchor
           (zhihu-reader--restore-point key)))
       t)))

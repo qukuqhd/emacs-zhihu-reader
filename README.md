@@ -156,6 +156,30 @@ Recommendation and search results are grouped by question:
   following feed uses the server-provided `paging.next` / `previous` cursor
   and loads asynchronously.  Collection pagination stops at the last page.
 
+## Zhihu links inside buffers
+
+`RET` and `o` on a Zhihu link open it inside Emacs instead of sending it to
+an external browser:
+
+```text
+/search?q=...                  -> *Zhihu Search*
+/search?...&content_type=article&content_id=... -> *Zhihu Article*
+/search?...&content_type=answer&content_id=...  -> *Zhihu Answer*
+/search?...&content_type=question&content_id=... -> *Zhihu Question*
+/question/<id>/answer/<id>     -> *Zhihu Answer*
+/question/<id>                 -> *Zhihu Question*
+/answer/<id>                   -> *Zhihu Answer*
+/p/<id>                        -> *Zhihu Article*
+/people/<token>                -> author view
+/topic/<id>                    -> topic view
+/collection/<id>               -> collection view
+/hot                           -> hot list
+```
+
+Search and article views use dedicated buffers; existing question/answer
+views already use their own buffers.  Non-Zhihu links keep the
+EAF/Readability fallback.
+
 ## Commands
 
 Global keys from `custom-post.el`:
@@ -177,6 +201,8 @@ M-x zhihu-reader-hot       ; hot list
 M-x zhihu-reader-search    ; search
 M-x zhihu-reader-question  ; question + answer list
 M-x zhihu-reader-answer    ; answer + comments
+M-x zhihu-reader-article   ; article in its own buffer
+M-x zhihu-reader-open-zhihu-url ; route a Zhihu URL internally
 M-x zhihu-reader-read-url  ; EAF + Readability fallback
 M-x zhihu-reader-edit-at-point ; edit answer/comment in an Org buffer
 M-x zhihu-reader-new-article ; create an article Org source file

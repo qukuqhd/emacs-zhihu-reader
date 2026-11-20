@@ -53,6 +53,91 @@
     (when (eq (org-element-type context) 'link)
       (org-element-property :raw-link context))))
 
+(defun zhihu-reader-article (id &optional buffer-name)
+  "Open Zhihu article ID in a dedicated Org buffer."
+  (interactive
+   (list (or (read-string "知乎文章 ID 或 URL: ")
+             (user-error "文章 ID 为空"))))
+  (let* ((id (zhihu-reader--id-or-url id))
+         (url (format "https://www.zhihu.com/api/v4/articles/%s?include=content,author,comment_count,voteup_count,title" id))
+         (resp (zhihu-reader--http-json "GET" url nil nil))
+         (json (plist-get resp :json))
+         (status (plist-get resp :status)))
+    (unless (memq status '(200 201))
+      (user-error "文章加载失败 (HTTP %s)" status))
+    (let* ((item (zhihu-reader--normalize
+                  (list (cons 'target json) (cons 'type "article"))))
+           (buffer (or buffer-name "*Zhihu Article*")))
+      (if item
+          (zhihu-reader--render
+           (format "文章 · %s" (or (plist-get item :title) id))
+           (list item) (list 'article id) buffer)
+        (user-error "文章没有可用内容")))))
+
+(defun zhihu-reader--zhihu-url-p (url)
+  "Return non-nil when URL is a Zhihu/Zhuanlan URL."
+  (let* ((parsed (ignore-errors (url-generic-parse-url (or url ""))))
+         (host (and parsed (url-host parsed))))
+    (and host (string-match-p "\\(?:^\\|\\.\\)zhihu\\.com\\'" host))))
+
+(defun zhihu-reader--url-query (url)
+  "Return decoded query parameters of URL as an alist."
+  (let* ((filename (or (url-filename (url-generic-parse-url url)) ""))
+         (pos (string-match "\\?" filename)))
+    (if pos (url-parse-query-string (substring filename (1+ pos))) nil)))
+
+(defun zhihu-reader--query-value (query key)
+  "Return value for KEY from QUERY alist."
+  (cadr (assoc key query)))
+
+(defun zhihu-reader-open-zhihu-url (url &optional buffer-name)
+  "Open Zhihu URL inside Emacs, using a dedicated buffer when appropriate.
+BUFFER-NAME overrides the target buffer for search/article views."
+  (interactive "s知乎 URL: ")
+  (if (not (zhihu-reader--zhihu-url-p url))
+      (zhihu-reader-read-url url)
+    (let* ((parsed (url-generic-parse-url url))
+           (path (or (url-filename parsed) "/"))
+           (query (zhihu-reader--url-query url))
+           (content-type (zhihu-reader--query-value query "content_type"))
+           (content-id (zhihu-reader--query-value query "content_id")))
+      (cond
+       ;; Search result / comment deep links carry content_type/content_id.
+       ((and content-type content-id)
+        (cond
+         ((equal content-type "article")
+          (zhihu-reader-article content-id (or buffer-name "*Zhihu Article*")))
+         ((equal content-type "answer")
+          (zhihu-reader-answer content-id))
+         ((equal content-type "question")
+          (zhihu-reader-question content-id))
+         (t (zhihu-reader-read-url url))))
+       ((string-match "/search" path)
+        (let ((q (or (zhihu-reader--query-value query "q") "")))
+          (if (string-empty-p q)
+              (zhihu-reader-read-url url)
+            (zhihu-reader-search q nil nil
+                                (or buffer-name "*Zhihu Search*")))))
+       ((string-match "/question/\\([0-9]+\\)/answer/\\([0-9]+\\)" path)
+        (zhihu-reader-answer (match-string 2 path)))
+       ((string-match "/answer/\\([0-9]+\\)" path)
+        (zhihu-reader-answer (match-string 1 path)))
+       ((string-match "/question/\\([0-9]+\\)" path)
+        (zhihu-reader-question (match-string 1 path)))
+       ((string-match "/p/\\([0-9]+\\)" path)
+        (zhihu-reader-article (match-string 1 path)))
+       ((string-match "/people/\\([^/?]+\\)" path)
+        (zhihu-reader-author (match-string 1 path)))
+       ((string-match "/topic/\\([0-9]+\\)" path)
+        (zhihu-reader-topic (match-string 1 path)))
+       ((string-match "/collection/\\([0-9]+\\)" path)
+        (zhihu-reader-collection (match-string 1 path)))
+       ((string= path "/hot")
+        (zhihu-reader-hot))
+       ((or (string= path "/") (string-match-p "/follow" path))
+        (zhihu-reader-following))
+       (t (zhihu-reader-read-url url))))))
+
 (defun zhihu-reader-open-at-point ()
   "Enter the question/answer at point, or open its link."
   (interactive)
@@ -61,11 +146,10 @@
         (article (org-entry-get nil "ZHIHU-ARTICLE"))
         (url (zhihu-reader--link-at-point)))
     (cond
+     (url (zhihu-reader-open-zhihu-url url))
      (a (zhihu-reader-answer a))
      (q (zhihu-reader-question q))
-     (url (zhihu-reader-read-url url))
-     (article (zhihu-reader-read-url
-               (format "https://zhuanlan.zhihu.com/p/%s" article)))
+     (article (zhihu-reader-article article))
      (t (org-open-at-point)))))
 
 (defun zhihu-reader-copy-share-link ()
@@ -497,26 +581,27 @@ With FORCE non-nil, bypass the page cache."
     (replace-regexp-in-string
      "offset=0" (format "offset=%d" (* 20 (1- (or page 1)))) url)))
 
-(defun zhihu-reader-search (&optional query page force)
+(defun zhihu-reader-search (&optional query page force buffer-name)
   "Search Zhihu for QUERY, starting at PAGE.
-With FORCE non-nil, bypass the page cache."
+With FORCE non-nil, bypass the page cache.  BUFFER-NAME selects a
+dedicated buffer (used by internal link routing)."
   (interactive (list (read-string "搜索知乎: ")
                      (prefix-numeric-value current-prefix-arg)))
   (let* ((query (or query (read-string "搜索知乎: ")))
          (page (or page 1))
-         (key (list 'search query page))
+         (key (list 'search query page buffer-name))
          (url (zhihu-reader--search-url query page))
          (title (format "搜索 · %s · 第 %d 页" query page)))
-    (if (and (not force) (zhihu-reader--show-cached key))
+    (if (and (not force) (zhihu-reader--show-cached key buffer-name))
         (message "使用缓存的搜索第 %d 页" page)
       (if noninteractive
           (let ((items (zhihu-reader--normalize-items
                         (zhihu-reader--fetch-json url))))
             (puthash key (cons title items) zhihu-reader--page-cache)
-            (zhihu-reader--render title items key)
+            (zhihu-reader--render title items key buffer-name)
             (zhihu-reader--restore-point key))
         (zhihu-reader--async-list
-         title key url nil
+         title key url buffer-name
          (lambda (json)
            (cons title (zhihu-reader--normalize-items json)))
          key)))))
@@ -528,11 +613,13 @@ With FORCE non-nil, bypass the page cache."
     ('feed (zhihu-reader-feed (nth 1 zhihu-reader--view) t))
     ('hot (zhihu-reader-hot t))
     ('search (zhihu-reader-search (nth 1 zhihu-reader--view)
-                                   (nth 2 zhihu-reader--view) t))
+                                   (nth 2 zhihu-reader--view) t
+                                   (nth 3 zhihu-reader--view)))
     ('question (zhihu-reader-question (nth 1 zhihu-reader--view)
                                        (nth 2 zhihu-reader--view)
                                        (nth 3 zhihu-reader--view) t))
     ('answer (zhihu-reader-answer (nth 1 zhihu-reader--view)))
+    ('article (zhihu-reader-article (nth 1 zhihu-reader--view)))
     ('author (zhihu-reader-author (nth 1 zhihu-reader--view)
                                   (nth 2 zhihu-reader--view)))
     (_ (user-error "当前 buffer 没有可刷新的知乎视图"))))
@@ -559,7 +646,8 @@ With FORCE non-nil, bypass the page cache."
     (pcase (car-safe view)
       ('feed (zhihu-reader-feed (1+ (or (nth 1 view) 1))))
       ('search (zhihu-reader-search (nth 1 view)
-                                     (1+ (or (nth 2 view) 1))))
+                                     (1+ (or (nth 2 view) 1))
+                                     nil (nth 3 view)))
       ('question (zhihu-reader-question (nth 1 view)
                                         (1+ (or (nth 2 view) 1))
                                         (nth 3 view)))
@@ -586,7 +674,8 @@ With FORCE non-nil, bypass the page cache."
     (pcase (car-safe view)
       ('feed (zhihu-reader-feed (max 1 (1- (or (nth 1 view) 1)))))
       ('search (zhihu-reader-search (nth 1 view)
-                                     (max 1 (1- (or (nth 2 view) 1)))))
+                                     (max 1 (1- (or (nth 2 view) 1)))
+                                     nil (nth 3 view)))
       ('question (zhihu-reader-question (nth 1 view)
                                          (max 1 (1- (or (nth 2 view) 1)))
                                          (nth 3 view)))
